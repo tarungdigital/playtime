@@ -1,5 +1,6 @@
 """End-to-end flow with CHIP's API faked and plugs in dry-run mode."""
 
+import asyncio
 import base64
 import json
 import os
@@ -321,6 +322,33 @@ def test_admin_rejects_bad_prices(client):
     assert set_prices(client, *[(m, 1000) for m in (15, 30, 45, 60, 90, 120, 180)]).status_code == 400  # > 6
     assert set_prices(client, (2, 1000)).status_code == 400  # too short
     assert core.options == {30: 500, 60: 1000, 120: 2000, 180: 3000}
+
+
+def test_payment_method_whitelist(monkeypatch):
+    sent = {}
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"id": "x", "checkout_url": "https://gate.chip-in.asia/p/x/"}
+
+    async def fake_post(url, json):
+        sent.clear()
+        sent.update(json)
+        return Response()
+
+    monkeypatch.setattr(chip._http, "post", fake_post)
+    monkeypatch.setattr(config, "CHIP_PAYMENT_METHODS", ["dnqr", "duitnow_qr", "razer_tng"])
+    asyncio.run(chip.create_purchase("switch1", 60, 1000, "Switch1 playtime - 1 hour"))
+    assert sent["payment_method_whitelist"] == ["dnqr", "duitnow_qr", "razer_tng"]
+    assert core.payment_methods() == ["DuitNow QR", "Touch 'n Go"]  # duplicates merged
+
+    monkeypatch.setattr(config, "CHIP_PAYMENT_METHODS", [])
+    asyncio.run(chip.create_purchase("switch1", 60, 1000, "Switch1 playtime - 1 hour"))
+    assert "payment_method_whitelist" not in sent
+    assert core.payment_methods() == ["DuitNow QR", "FPX", "e-wallets", "cards"]
 
 
 def test_pages_render(client):

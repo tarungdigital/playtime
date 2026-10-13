@@ -41,7 +41,7 @@
     <div class="qr">{{ c.svg | safe }}</div>
     <div class="cta">Scan to play</div>
     <div class="price">{{ price_sen | rm }} per hour</div>
-    <div class="methods">DuitNow QR · FPX · e-wallets · cards</div>
+    <div class="methods">{{ payment_methods() | join(" · ") }}</div>
     <div class="url">{{ c.url }}</div>
   </div>
   {% endfor %}

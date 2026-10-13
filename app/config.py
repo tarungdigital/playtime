@@ -28,6 +28,9 @@ CHIP_BRAND_ID = os.environ["CHIP_BRAND_ID"]
 CHIP_CLIENT_EMAIL = os.environ["CHIP_CLIENT_EMAIL"]
 # Optional: open checkout on one payment method, e.g. "duitnow_qr" or "fpx".
 CHIP_PREFERRED_METHOD = os.environ.get("CHIP_PREFERRED_METHOD", "")
+# Optional: only offer these payment methods, comma separated, e.g. "duitnow_qr,fpx,razer_tng"
+# (codes from CHIP's GET /payment_methods/). Empty = everything your CHIP account offers.
+CHIP_PAYMENT_METHODS = [m.strip().lower() for m in os.environ.get("CHIP_PAYMENT_METHOD", "").split(",") if m.strip()]
 
 # Public https URL CHIP can reach (CHIP rejects URLs with an explicit port).
 # "play.example.com" is accepted too: https:// is added, since QR codes and CHIP need it.

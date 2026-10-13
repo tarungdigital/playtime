@@ -36,9 +36,18 @@ async def create_purchase(station: str, minutes: int, amount_sen: int, product_n
         "success_redirect": f"{config.PUBLIC_URL}/s/{station}?paid=1",
         "failure_redirect": f"{config.PUBLIC_URL}/s/{station}?failed=1",
     }
+    if config.CHIP_PAYMENT_METHODS:
+        body["payment_method_whitelist"] = config.CHIP_PAYMENT_METHODS
     r = await _http.post("/purchases/", json=body)
     r.raise_for_status()
     return r.json()
+
+
+async def available_methods() -> list[str]:
+    """Payment method codes this CHIP account can offer in MYR."""
+    r = await _http.get("/payment_methods/", params={"brand_id": config.CHIP_BRAND_ID, "currency": "MYR"})
+    r.raise_for_status()
+    return r.json().get("available_payment_methods", [])
 
 
 async def get_purchase(purchase_id: str) -> dict:

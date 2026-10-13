@@ -11,8 +11,8 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from . import admin, chip, config, db
-from .core import (credit_if_paid, duration, enforce_loop, hourly_sen, label, load_config, log,
-                   options, plug_online, state, stations, templates)
+from .core import (check_payment_methods, credit_if_paid, duration, enforce_loop, hourly_sen, label,
+                   load_config, log, options, plug_online, spawn, state, stations, templates)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -21,6 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 async def lifespan(app: FastAPI):
     db.init()
     load_config()
+    spawn(check_payment_methods())
     task = asyncio.create_task(enforce_loop())
     yield
     task.cancel()

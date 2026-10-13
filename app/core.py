@@ -53,7 +53,44 @@ def duration(minutes: int) -> str:
     return f"{h} hr {m} min"
 
 
+METHOD_NAMES = {
+    "duitnow_qr": "DuitNow QR", "dnqr": "DuitNow QR", "fpx": "FPX", "fpx_b2b1": "FPX Business",
+    "razer_tng": "Touch 'n Go", "razer_grabpay": "GrabPay", "razer_shopeepay": "ShopeePay",
+    "shopee_pay": "ShopeePay", "razer_maybankqr": "Maybank QR", "razer_atome": "Atome",
+    "visa": "Visa", "mastercard": "Mastercard", "maestro": "Maestro",
+    "mpgs_apple_pay": "Apple Pay", "mpgs_google_pay": "Google Pay", "crypto_coin": "Crypto",
+}
+
+
+def payment_methods() -> list[str]:
+    """Names of the payment methods customers can use, for the pages to show."""
+    if not config.CHIP_PAYMENT_METHODS:
+        return ["DuitNow QR", "FPX", "e-wallets", "cards"]
+    names = [METHOD_NAMES.get(code, code) for code in config.CHIP_PAYMENT_METHODS]
+    return list(dict.fromkeys(names))  # dnqr + duitnow_qr -> one "DuitNow QR"
+
+
+async def check_payment_methods():
+    """Startup: warn about CHIP_PAYMENT_METHOD codes this CHIP account doesn't offer,
+    since CHIP would then refuse to create purchases."""
+    wanted = config.CHIP_PAYMENT_METHODS + ([config.CHIP_PREFERRED_METHOD] if config.CHIP_PREFERRED_METHOD else [])
+    if not wanted:
+        return
+    try:
+        available = await chip.available_methods()
+    except Exception as e:
+        log.warning("couldn't check payment methods with CHIP: %r", e)
+        return
+    unknown = [m for m in wanted if m not in available]
+    if unknown:
+        log.warning("payment methods not offered by your CHIP account: %s. Available: %s",
+                    ", ".join(unknown), ", ".join(available))
+    if config.CHIP_PAYMENT_METHODS and config.CHIP_PREFERRED_METHOD not in ("", *config.CHIP_PAYMENT_METHODS):
+        log.warning("CHIP_PREFERRED_METHOD=%s isn't in CHIP_PAYMENT_METHOD", config.CHIP_PREFERRED_METHOD)
+
+
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+templates.env.globals["payment_methods"] = payment_methods
 templates.env.filters["rm"] = rm
 templates.env.filters["label"] = label
 templates.env.filters["duration"] = duration
