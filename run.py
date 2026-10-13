@@ -5,6 +5,8 @@ permanent public address yet (PUBLIC_URL in .env is empty, localhost, or a
     python run.py              # decide automatically
     python run.py --tunnel     # always start a quick tunnel
     python run.py --no-tunnel  # server only (e.g. you have your own domain)
+
+The server listens on PORT from .env (default 8000); --port overrides it.
 """
 
 import argparse
@@ -36,6 +38,18 @@ def write_public_url(url: str, env: Path = ENV):
     else:
         lines.append(f"\nPUBLIC_URL={url}\n")
     env.write_text("".join(lines), encoding="utf-8")
+
+
+def read_port(env: Path = ENV) -> int:
+    """PORT from .env, default 8000."""
+    for line in env.read_text(encoding="utf-8").splitlines():
+        if line.startswith("PORT="):
+            raw = line.split("=", 1)[1].split("#", 1)[0].strip()
+            if raw:
+                if not raw.isdigit() or not 1 <= int(raw) <= 65535:
+                    sys.exit(f"PORT in .env must be a number from 1 to 65535, not {raw!r}.")
+                return int(raw)
+    return 8000
 
 
 def needs_quick_tunnel(url: str) -> bool:
@@ -71,23 +85,24 @@ def main():
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--tunnel", action="store_true", help="always start a quick tunnel")
     group.add_argument("--no-tunnel", action="store_true", help="server only")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, help="overrides PORT in .env (default 8000)")
     args = parser.parse_args()
 
     if not ENV.exists():
         sys.exit("No .env file yet: copy .env.example to .env and fill it in.")
+    port = args.port or read_port()
 
     url = read_public_url()
     if url and "://" not in url:
         url = "https://" + url  # same as the app does
     tunnel = None
     if args.tunnel or (not args.no_tunnel and needs_quick_tunnel(url)):
-        tunnel, url = start_quick_tunnel(args.port)
+        tunnel, url = start_quick_tunnel(port)
         write_public_url(url)
 
     print()
     print(f"  Public address : {url}")
-    print(f"  Admin panel    : http://localhost:{args.port}/admin   (or {url}/admin)")
+    print(f"  Admin panel    : http://localhost:{port}/admin   (or {url}/admin)")
     print(f"  QR codes       : {url}/print")
     if tunnel:
         print()
@@ -99,7 +114,7 @@ def main():
 
     try:
         # A fresh process, so the app reads the PUBLIC_URL just written to .env.
-        subprocess.run([sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(args.port)], cwd=BASE)
+        subprocess.run([sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port)], cwd=BASE)
     except KeyboardInterrupt:
         pass
     finally:
