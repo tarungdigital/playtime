@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QR codes · {{ shop_name }}</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px; background: #eef0f4; color: #0b0d12;
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  .hint { max-width: 900px; margin: 0 auto 18px; font-size: 14px; color: #555; }
+  .grid { display: flex; flex-wrap: wrap; gap: 18px; justify-content: center; }
+  .card {
+    width: 320px; padding: 26px 24px 22px; border-radius: 22px; background: #fff; text-align: center;
+    border: 1px solid #dde1e8; break-inside: avoid; page-break-inside: avoid;
+  }
+  .shop { font-size: 13px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; color: #ff3d52; }
+  .station { margin: 4px 0 14px; font-size: 30px; font-weight: 800; letter-spacing: -.5px; }
+  .qr svg { display: block; width: 230px; height: 230px; margin: 0 auto; }
+  .cta { margin-top: 14px; font-size: 20px; font-weight: 750; }
+  .price { margin-top: 2px; font-size: 15px; color: #444; }
+  .methods { margin-top: 10px; font-size: 12px; color: #777; }
+  .url { margin-top: 10px; font-size: 10.5px; color: #999; word-break: break-all; }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .hint { display: none; }
+    .card { border: 1.5px dashed #bbb; }
+  }
+</style>
+</head>
+<body>
+<p class="hint">Print this page (Ctrl+P) and stick each card next to its console. Each QR opens that station's pay page.</p>
+<div class="grid">
+  {% for c in cards %}
+  <div class="card">
+    <div class="shop">{{ shop_name }}</div>
+    <div class="station">{{ c.station | label }}</div>
+    <div class="qr">{{ c.svg | safe }}</div>
+    <div class="cta">Scan to play</div>
+    <div class="price">{{ price_sen | rm }} per hour</div>
+    <div class="methods">DuitNow QR · FPX · e-wallets · cards</div>
+    <div class="url">{{ c.url }}</div>
+  </div>
+  {% endfor %}
+</div>
+</body>
+</html>

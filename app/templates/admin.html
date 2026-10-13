@@ -1,0 +1,845 @@
+{% extends "base.html" %}
+{% block title %}Admin · {{ shop_name }}{% endblock %}
+{% block wrap_class %}wide{% endblock %}
+
+{% block head %}
+<meta name="robots" content="noindex">
+<style>
+  :root {
+    --series: #3987e5;
+    --series-hover: #5598e7;
+    --grid: #222a38;
+    --axis: #343d50;
+    --text-2: #c3c9d6;
+  }
+  .top-actions { display: flex; align-items: center; gap: 10px; }
+  .link-btn {
+    padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent;
+    color: var(--muted); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .link-btn:hover { color: var(--text); border-color: var(--muted); }
+
+  h2 { margin: 0; font-size: 16px; font-weight: 650; }
+  .section-title { margin: 28px 0 12px; }
+  .small { font-size: 13px; }
+  .card { padding: 18px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); }
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+
+  /* KPI row */
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 22px; }
+  .kpi { padding: 16px 18px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); min-width: 0; }
+  .kpi-label { font-size: 13px; color: var(--muted); }
+  .kpi-value { margin-top: 4px; font-size: 30px; font-weight: 650; letter-spacing: -.5px; line-height: 1.15; }
+  .kpi-meta { margin-top: 4px; font-size: 13px; color: var(--text-2); }
+  .kpi-value + .kpi-meta { margin-top: 6px; }
+  .delta-up { color: var(--ok); }
+  .delta-down { color: #ff9aa5; }
+
+  /* Stations */
+  .stations { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .station { padding: 18px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); }
+  .station.active { border-color: rgba(255, 61, 82, .35); }
+  .station-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .station-name { font-size: 18px; font-weight: 700; }
+  .countdown { margin-top: 12px; font-size: 40px; font-weight: 700; letter-spacing: -1px; line-height: 1; font-variant-numeric: tabular-nums; }
+  .countdown.idle { color: var(--muted); }
+  .countdown.warning { color: var(--warn); }
+  .countdown.critical { color: var(--danger); }
+  .ends { margin-top: 6px; min-height: 20px; font-size: 13.5px; color: var(--text-2); }
+  .plug { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+  .dot.offline { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
+  .plug .offline-text { color: #ff9aa5; font-weight: 600; }
+  .link-inline {
+    margin-left: 2px; padding: 0; border: 0; background: none; color: var(--series);
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .link-inline:hover { text-decoration: underline; }
+  .link-inline[hidden] { display: none; }
+  .panel { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .panel[hidden] { display: none; }
+  .panel-form { display: grid; gap: 10px; }
+  .field-label { display: grid; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+  .field {
+    width: 100%; min-width: 0; padding: 9px 12px; border-radius: 10px; border: 1.5px solid var(--line);
+    background: var(--bg); color: var(--text); font: inherit; font-size: 16px; font-weight: 400;
+  }
+  .field.mono { font-variant-numeric: tabular-nums; }
+  .field:focus { outline: none; border-color: var(--series); }
+  .field-row { display: flex; gap: 8px; }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .form-result { font-size: 13px; line-height: 1.4; }
+  .form-result[hidden] { display: none; }
+  .form-result.ok { color: var(--ok); }
+  .form-result.bad { color: #ff9aa5; }
+  .form-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .form-actions .danger { margin-left: auto; }
+  .hint.warn { color: var(--warn); }
+  .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; align-items: start; }
+  .head-actions { display: flex; align-items: center; gap: 12px; }
+  .readout-list { display: grid; grid-template-columns: 1fr auto; margin: 0; }
+  .readout-list dt, .readout-list dd { margin: 0; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14.5px; }
+  .readout-list dt { color: var(--text-2); }
+  .readout-list dd { text-align: right; font-weight: 650; font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
+  .readout-list dt:first-of-type, .readout-list dd:first-of-type { border-top: 0; padding-top: 0; }
+  .price-rows { display: grid; gap: 8px; }
+  .price-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+  .money { position: relative; }
+  .money span { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 14px; pointer-events: none; }
+  .money .field { padding-left: 40px; }
+  select.field { appearance: none; cursor: pointer;
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
+  .add-card { display: flex; align-items: stretch; justify-content: center; min-height: 140px; border-style: dashed; }
+  .add-card.open { display: block; border-style: solid; }
+  .add-card .panel-form { margin-top: 12px; }
+  .add-btn {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    border: 0; background: none; color: var(--muted); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  .add-btn:hover { color: var(--text); }
+  .add-btn .plus {
+    display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%;
+    border: 1.5px dashed currentColor; font-size: 22px; line-height: 1;
+  }
+  @media (max-width: 560px) { .field-grid { grid-template-columns: 1fr; } }
+  .btn-s.primary { background: var(--series); border-color: var(--series); color: #fff; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .btn-s {
+    padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2);
+    color: var(--text); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .btn-s:hover { border-color: var(--muted); }
+  .btn-s:disabled { opacity: .5; cursor: progress; }
+  .btn-s.danger { margin-left: auto; color: #ff9aa5; background: transparent; border-color: rgba(255, 77, 94, .4); }
+  .btn-s.danger:hover { background: var(--danger-soft); }
+  .btn-s.armed { background: var(--series); border-color: var(--series); color: #fff; }
+  .btn-s.danger.armed { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .station-links { display: flex; gap: 16px; margin-top: 12px; }
+  .station-link { font-size: 13px; color: var(--muted); text-decoration: none; }
+  .station-link:hover { color: var(--text); }
+
+  /* Chart + pending */
+  .grid-2 { display: grid; grid-template-columns: 3fr 2fr; gap: 12px; margin-top: 28px; }
+  .chart { position: relative; }
+  .chart svg { display: block; overflow: visible; }
+  .chart .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .chart .xlabel { fill: var(--muted); font-size: 11.5px; }
+  .chart .xlabel.today { fill: var(--text-2); font-weight: 650; }
+  .chart .vlabel { fill: var(--text-2); font-size: 11.5px; font-weight: 600; }
+  .chart .bar { fill: var(--series); transition: fill .12s; }
+  .chart .bar.hover { fill: var(--series-hover); }
+  .chart .hit { fill: transparent; cursor: default; outline: none; }
+  .chart .empty { fill: var(--muted); font-size: 13px; }
+  .tip {
+    position: absolute; z-index: 2; pointer-events: none; transform: translate(-50%, calc(-100% - 10px));
+    padding: 8px 10px; border-radius: 10px; background: #0f131b; border: 1px solid var(--line);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .4); white-space: nowrap;
+  }
+  .tip strong { display: block; font-size: 15px; }
+  .tip span { font-size: 12px; color: var(--muted); }
+  details.table-view { margin-top: 10px; font-size: 13px; }
+  details.table-view summary { color: var(--muted); cursor: pointer; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 0 10px 8px 0; }
+  td { padding: 10px 10px 10px 0; border-top: 1px solid var(--line); vertical-align: middle; }
+  td.num, th.num { text-align: right; padding-right: 0; font-variant-numeric: tabular-nums; }
+  .table-wrap { overflow-x: auto; }
+  .kind { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--surface-2); color: var(--text-2); }
+  .kind.payment { background: var(--ok-soft); color: var(--ok); }
+  .kind.stop { background: var(--danger-soft); color: #ff9aa5; }
+  .empty-row { color: var(--muted); font-size: 14px; padding: 6px 0; }
+  .hint { margin: -6px 0 12px; font-size: 13px; color: var(--muted); }
+
+  .links { margin-top: 24px; font-size: 14px; color: var(--muted); }
+  .links a { color: var(--muted); }
+  .links a:hover { color: var(--text); }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; z-index: 10; transform: translateX(-50%);
+    padding: 10px 16px; border-radius: 999px; background: #f3f5f9; color: #0b0d12;
+    font-size: 14px; font-weight: 600; box-shadow: 0 10px 30px rgba(0, 0, 0, .45); max-width: calc(100vw - 32px);
+  }
+  .toast[hidden] { display: none; }
+
+  @media (max-width: 860px) {
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 380px) {
+    .kpi-value { font-size: 25px; }
+  }
+</style>
+{% endblock %}
+
+{% block badge %}
+<div class="top-actions">
+  <span class="badge">Admin</span>
+  <form method="post" action="/admin/logout"><button class="link-btn" type="submit">Log out</button></form>
+</div>
+{% endblock %}
+
+{% block content %}
+<section class="kpis" id="kpis" aria-label="Revenue summary"></section>
+
+<h2 class="section-title">Stations</h2>
+<section class="stations" id="stations"></section>
+
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>Revenue, last 7 days</h2></div>
+    <div class="chart" id="chart"><div class="tip" id="tip" hidden><strong></strong><span></span></div></div>
+    <details class="table-view">
+      <summary>Show as table</summary>
+      <table><thead><tr><th>Day</th><th class="num">Revenue</th></tr></thead><tbody id="days-table"></tbody></table>
+    </details>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>Unconfirmed checkouts</h2><span class="muted small">last hour</span></div>
+    <p class="hint">A customer paid but their time didn't start? Press Recheck to ask CHIP again.</p>
+    <div id="pending"></div>
+  </section>
+</div>
+
+<section class="card" style="margin-top: 12px">
+  <div class="card-head"><h2>Recent activity</h2></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Time</th><th>Station</th><th>What</th><th class="num">Amount</th></tr></thead>
+      <tbody id="activity"></tbody>
+    </table>
+  </div>
+</section>
+
+<h2 class="section-title">Settings</h2>
+<div class="settings-grid">
+  <section class="card" id="prices-card"></section>
+  <section class="card" id="tapo-card"></section>
+</div>
+
+<footer class="links"><a href="/print">Print QR codes</a> · <a href="/">Public status page</a></footer>
+<div class="toast" id="toast" role="status" hidden></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  let data = {{ summary | tojson }};
+  const $ = (id) => document.getElementById(id);
+  const SVG = "http://www.w3.org/2000/svg";
+
+  // Build DOM without innerHTML so names can never inject markup.
+  function h(tag, props = {}, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(props)) {
+      if (k === "class") el.className = v;
+      else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+      else if (v != null && v !== false) el.setAttribute(k, v === true ? "" : v);
+    }
+    for (const kid of kids.flat()) {
+      if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
+    }
+    return el;
+  }
+  function s(tag, attrs = {}, text) {
+    const el = document.createElementNS(SVG, tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    if (text != null) el.textContent = text;
+    return el;
+  }
+
+  const rm = (sen) => "RM" + (sen % 100 ? (sen / 100).toFixed(2) : (sen / 100).toLocaleString("en-MY"));
+  const pad = (n) => String(n).padStart(2, "0");
+  const dur = (min) => {  // 30 -> "30 min", 60 -> "1 hr", 90 -> "1 hr 30 min"
+    const hh = Math.floor(min / 60), mm = min % 60;
+    return [hh && `${hh} hr`, (mm || !hh) && `${mm} min`].filter(Boolean).join(" ");
+  };
+  const fmtLeft = (sec) => {
+    const hh = Math.floor(sec / 3600), mm = Math.floor(sec % 3600 / 60), ss = sec % 60;
+    return hh ? `${hh}:${pad(mm)}:${pad(ss)}` : `${pad(mm)}:${pad(ss)}`;
+  };
+  const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const when = (ts) => {
+    const d = new Date(ts * 1000);
+    const sameDay = d.toDateString() === new Date().toDateString();
+    return sameDay ? clock(d) : d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) + ", " + clock(d);
+  };
+  const ago = (ts) => {
+    const min = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
+    return min < 1 ? "just now" : `${min} min ago`;
+  };
+  const stationLabel = (id) => (data.stations.find((x) => x.station === id) || {}).label || id;
+
+  let toastTimer;
+  function toast(msg) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (t.hidden = true), 3500);
+  }
+
+  async function post(url, json) {
+    const opts = json === undefined ? { method: "POST" }
+      : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(json) };
+    const r = await fetch(url, opts);
+    if (r.status === 403) { location.reload(); throw new Error("logged out"); }
+    const res = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const err = new Error(typeof res.detail === "string" ? res.detail : `Request failed (${r.status})`);
+      err.status = r.status;
+      throw err;
+    }
+    return res;
+  }
+
+  // --- KPI row ---------------------------------------------------------------
+  function renderKpis() {
+    const st = data.stats;
+    const diff = st.today_sen - st.yesterday_sen;
+    const delta = diff === 0
+      ? h("span", {}, "Same as yesterday")
+      : h("span", { class: diff > 0 ? "delta-up" : "delta-down" },
+          (diff > 0 ? "▲ " : "▼ ") + rm(Math.abs(diff)) + " vs yesterday");
+    const inUse = data.stations.filter((x) => x.active).length;
+    const tile = (labelText, value, ...meta) =>
+      h("div", { class: "kpi" },
+        h("div", { class: "kpi-label" }, labelText),
+        h("div", { class: "kpi-value" }, value),
+        meta.map((m) => h("div", { class: "kpi-meta" }, m)));
+    $("kpis").replaceChildren(
+      tile("Today", rm(st.today_sen), delta,
+        `${st.today_count} payment${st.today_count === 1 ? "" : "s"} · ${dur(st.today_minutes)} sold`),
+      tile("Last 7 days", rm(st.week_sen), `About ${rm(Math.round(st.week_sen / 7 / 100) * 100)} a day`),
+      tile(st.month_label, rm(st.month_sen), "This month so far"),
+      tile("Playing now", `${inUse} of ${data.stations.length}`, "stations in use"),
+    );
+  }
+
+  // --- Shared form: name + plug IP (with Check), used to add and to edit stations ---
+  const describePlug = (p) => `Found “${p.nickname}” (${p.model}, currently ${p.on ? "on" : "off"})`;
+
+  function formResult() {
+    const el = h("div", { class: "form-result", hidden: true });
+    el.show = (ok, text) => {
+      el.className = "form-result " + (ok ? "ok" : "bad");
+      el.textContent = (ok ? "✓ " : "✗ ") + text;
+      el.hidden = false;
+    };
+    return el;
+  }
+
+  // Submits via onSave(). A 409 means "no plug/login answered": offer to save anyway.
+  function submitHandler(f, submitText, onSave) {
+    f.reset = () => { f.force = false; f.submit.textContent = submitText; f.result.hidden = true; };
+    return async (e) => {
+      e.preventDefault();
+      f.submit.disabled = true;
+      try { await onSave(); }
+      catch (err) {
+        f.result.show(false, err.message);
+        if (err.status === 409) { f.force = true; f.submit.textContent = "Save anyway"; }
+      }
+      f.submit.disabled = false;
+    };
+  }
+
+  function stationForm({ name = "", ip = "", submitText, onSave, onCancel, extra }) {
+    const f = { result: formResult() };
+    const check = async () => {
+      f.check.disabled = true;
+      f.check.textContent = "Checking…";
+      try { f.result.show(true, describePlug(await post("/admin/plugs/check", { ip: f.ip.value }))); }
+      catch (err) { f.result.show(false, err.message); }
+      f.check.disabled = false;
+      f.check.textContent = "Check";
+    };
+    f.el = h("form", { class: "panel-form",
+        onsubmit: submitHandler(f, submitText, () => onSave({ name: f.name.value, ip: f.ip.value, force: !!f.force })) },
+      h("label", { class: "field-label" }, "Name",
+        f.name = h("input", { class: "field", maxlength: 40, value: name, placeholder: "e.g. Switch 3",
+          autocomplete: "off", oninput: () => f.reset() })),
+      h("label", { class: "field-label" }, "Plug IP address",
+        h("div", { class: "field-row" },
+          f.ip = h("input", { class: "field mono", inputmode: "decimal", value: ip, placeholder: "192.168.1.50",
+            autocomplete: "off", spellcheck: "false", oninput: () => f.reset() }),
+          f.check = h("button", { class: "btn-s", type: "button", onclick: check }, "Check"))),
+      f.result,
+      h("div", { class: "form-actions" },
+        f.submit = h("button", { class: "btn-s primary", type: "submit" }, submitText),
+        h("button", { class: "btn-s", type: "button", onclick: onCancel }, "Cancel"),
+        extra));
+    return f;
+  }
+
+  // --- Stations (cards built once, then updated in place) ----------------------
+  const cards = {};
+  function buildStations() {
+    for (const st of data.stations) {
+      const id = st.station;
+      const el = {};
+      const addBtn = (min, text) => h("button", { class: "btn-s", type: "button", onclick: (e) => addTime(id, min, e.currentTarget) }, text);
+      el.root = h("article", { class: "station" },
+        h("div", { class: "station-head" },
+          el.name = h("div", { class: "station-name" }, st.label),
+          el.badge = h("span", { class: "badge" })),
+        el.countdown = h("div", { class: "countdown" }),
+        el.ends = h("div", { class: "ends" }),
+        h("div", { class: "plug" }, el.dot = h("span", { class: "dot" }), el.plug = h("span")),
+        h("div", { class: "actions" },
+          addBtn(15, "+15 min"), addBtn(30, "+30 min"), addBtn(60, "+1 hr"),
+          el.stop = h("button", { class: "btn-s danger", type: "button", onclick: (e) => stopStation(id, e.currentTarget) }, "Stop")),
+        el.panel = h("div", { class: "panel", hidden: true }),
+        h("div", { class: "station-links" },
+          h("a", { class: "station-link", href: `/d/${encodeURIComponent(id)}`, target: "_blank", rel: "noopener" }, "Display screen ↗"),
+          h("a", { class: "station-link", href: `/s/${encodeURIComponent(id)}`, target: "_blank", rel: "noopener" }, "Customer page ↗"),
+          el.edit = h("button", { class: "link-inline", type: "button", onclick: () => openEdit(id) }, "Edit")));
+      cards[id] = el;
+      $("stations").append(el.root);
+    }
+    buildAddCard();
+  }
+
+  function openEdit(id) {
+    const el = cards[id];
+    const st = data.stations.find((x) => x.station === id);
+    const remove = h("button", { class: "btn-s danger", type: "button", onclick: (e) => removeStation(id, e.currentTarget) }, "Remove");
+    const f = stationForm({
+      name: st.label, ip: st.ip, submitText: "Save", extra: remove,
+      onCancel: () => closeEdit(id),
+      onSave: async (values) => {
+        const r = await post(`/admin/stations/${encodeURIComponent(id)}`, values);
+        closeEdit(id);
+        toast(`Saved ${r.name}` + (r.plug ? ` · plug “${r.plug.nickname}”` : ""));
+        await refresh();
+      },
+    });
+    el.panel.replaceChildren(f.el);
+    el.panel.hidden = false;
+    el.edit.hidden = true;
+    f.name.focus();
+  }
+
+  function closeEdit(id) {
+    cards[id].panel.hidden = true;
+    cards[id].panel.replaceChildren();
+    cards[id].edit.hidden = false;
+  }
+
+  async function removeStation(id, btn) {
+    if (!confirmedTap(btn, "Tap again to remove")) return;
+    btn.disabled = true;
+    try {
+      await post(`/admin/stations/${encodeURIComponent(id)}/remove`);
+      location.reload();
+    } catch (e) { toast(e.message); btn.disabled = false; }
+  }
+
+  function buildAddCard() {
+    const card = h("article", { class: "station add-card" });
+    const showButton = () => {
+      card.classList.remove("open");
+      card.replaceChildren(h("button", { class: "add-btn", type: "button", onclick: showForm },
+        h("span", { class: "plus", "aria-hidden": "true" }, "+"), "Add station"));
+    };
+    function showForm() {
+      const f = stationForm({
+        submitText: "Add station", onCancel: showButton,
+        onSave: async (values) => {
+          const r = await post("/admin/stations", values);
+          toast(`Added ${r.name}`);
+          location.reload();
+        },
+      });
+      card.classList.add("open");
+      card.replaceChildren(h("div", { class: "station-name" }, "New station"), f.el);
+      f.name.focus();
+    }
+    showButton();
+    $("stations").append(card);
+  }
+
+  // --- Settings cards: read-only until "Edit" is pressed ------------------------------
+  const editing = { prices: false, tapo: false };
+  const shown = { prices: "", tapo: "" };  // what the read-only views last showed
+
+  function settingsHead(title, onEdit, ...extras) {
+    return h("div", { class: "card-head" }, h("h2", {}, title),
+      h("div", { class: "head-actions" }, ...extras,
+        onEdit ? h("button", { class: "link-inline", type: "button", onclick: onEdit }, "Edit") : null));
+  }
+
+  // Redraw the read-only views when the data changed (e.g. another admin saved), never mid-edit.
+  function renderSettings() {
+    const prices = JSON.stringify(data.prices), tapo = JSON.stringify(data.tapo);
+    if (!editing.prices && prices !== shown.prices) { shown.prices = prices; showPrices(); }
+    if (!editing.tapo && tapo !== shown.tapo) { shown.tapo = tapo; showTapo(); }
+  }
+
+  // --- Prices ------------------------------------------------------------------------
+  const DURATIONS = [15, 30, 45, 60, 90, 120, 150, 180, 240, 300, 360];
+  const MAX_OPTIONS = 6;
+
+  function showPrices() {
+    if (!data.prices) return;
+    editing.prices = false;
+    $("prices-card").replaceChildren(
+      settingsHead("Prices", editPrices),
+      h("dl", { class: "readout-list" },
+        data.prices.flatMap((o) => [h("dt", {}, dur(o.minutes)), h("dd", {}, rm(o.sen))])));
+  }
+
+  function editPrices() {
+    editing.prices = true;
+    const rows = h("div", { class: "price-rows" });
+    const result = formResult();
+    let addBtn, saveBtn;
+    const hourly = (data.prices.find((p) => p.minutes === 60) || { sen: 1000 }).sen;
+
+    const refreshButtons = () => {
+      addBtn.disabled = rows.children.length >= MAX_OPTIONS;
+      rows.querySelectorAll(".remove").forEach((b) => (b.disabled = rows.children.length <= 1));
+    };
+    const addRow = (minutes, sen) => {
+      const choices = [...new Set([...DURATIONS, minutes])].sort((a, b) => a - b);
+      const row = h("div", { class: "price-row" },
+        h("select", { class: "field", "aria-label": "Play time", onchange: () => (result.hidden = true) },
+          choices.map((m) => h("option", { value: m, selected: m === minutes }, dur(m)))),
+        h("label", { class: "money" }, h("span", {}, "RM"),
+          h("input", { class: "field mono", inputmode: "decimal", value: (sen / 100).toFixed(2),
+            "aria-label": "Price in RM", oninput: () => (result.hidden = true) })),
+        h("button", { class: "btn-s remove", type: "button", "aria-label": "Remove this option",
+          onclick: () => { row.remove(); refreshButtons(); result.hidden = true; } }, "Remove"));
+      rows.append(row);
+      refreshButtons();
+    };
+    const addNext = () => {
+      const used = [...rows.querySelectorAll("select")].map((s) => Number(s.value));
+      const minutes = DURATIONS.find((m) => !used.includes(m)) || 60;
+      addRow(minutes, Math.max(100, Math.round(hourly * minutes / 60 / 50) * 50));  // pro rata, to RM0.50
+      rows.lastChild.querySelector("input").focus();
+    };
+    const save = async (e) => {
+      e.preventDefault();
+      const list = [...rows.children].map((row) => ({
+        minutes: Number(row.querySelector("select").value),
+        sen: Math.round(parseFloat(row.querySelector("input").value.replace(",", ".")) * 100),
+      }));
+      if (list.some((o) => !Number.isFinite(o.sen))) return result.show(false, "Enter each price as a number, e.g. 10 or 7.50.");
+      saveBtn.disabled = true;
+      try {
+        data.prices = (await post("/admin/prices", { options: list })).prices;
+        shown.prices = JSON.stringify(data.prices);
+        showPrices();
+        toast("Prices saved. The pay page shows them from its next load.");
+      } catch (err) {
+        result.show(false, err.message);
+        saveBtn.disabled = false;
+      }
+    };
+
+    $("prices-card").replaceChildren(h("form", { class: "panel-form", onsubmit: save },
+      settingsHead("Prices", null),
+      h("p", { class: "hint" }, `What customers can pick on the pay page (up to ${MAX_OPTIONS}). ` +
+        "Checkouts already started keep the price they were shown."),
+      rows,
+      h("div", {}, addBtn = h("button", { class: "btn-s", type: "button", onclick: addNext }, "+ Add option")),
+      result,
+      h("div", { class: "form-actions" },
+        saveBtn = h("button", { class: "btn-s primary", type: "submit" }, "Save prices"),
+        h("button", { class: "btn-s", type: "button", onclick: showPrices }, "Cancel"))));
+    data.prices.forEach((o) => addRow(o.minutes, o.sen));
+    rows.querySelector("input").focus();
+  }
+
+  // --- Tapo account ---------------------------------------------------------------
+  const notSet = () => h("span", { class: "muted" }, "Not set");
+
+  function showTapo() {
+    const t = data.tapo;
+    if (!t) return;  // never let this card take the whole dashboard down
+    editing.tapo = false;
+    $("tapo-card").replaceChildren(
+      settingsHead("Tapo account", editTapo, t.simulated ? h("span", { class: "badge" }, "Plugs simulated") : null),
+      h("dl", { class: "readout-list" },
+        h("dt", {}, "Email"), h("dd", {}, t.username || notSet()),
+        h("dt", {}, "Password"), h("dd", {}, t.password_set ? "••••••••" : notSet())));
+  }
+
+  function editTapo() {
+    editing.tapo = true;
+    const t = data.tapo;
+    const f = { result: formResult() };
+    const save = async () => {
+      const r = await post("/admin/tapo-account", { username: f.user.value, password: f.pass.value, force: !!f.force });
+      data.tapo = { ...data.tapo, username: r.username, password_set: true };
+      shown.tapo = JSON.stringify(data.tapo);
+      showTapo();
+      toast(r.tested ? `Tapo login saved. ${r.tested}` : r.simulated
+        ? "Tapo login saved. Not tested, because plugs are simulated." : "Tapo login saved.");
+    };
+    $("tapo-card").replaceChildren(h("form", { class: "panel-form", onsubmit: submitHandler(f, "Test & save", save) },
+      settingsHead("Tapo account", null, t.simulated ? h("span", { class: "badge" }, "Plugs simulated") : null),
+      h("p", { class: "hint" }, "Plugs are switched with the login you use in the Tapo app. " +
+        "In the app, turn on Me › Third-Party Services › Third-Party Compatibility."),
+      t.simulated ? h("p", { class: "hint warn" }, "PLUG_DRY_RUN=true in .env, so plugs are only simulated. " +
+        "This login is saved but not tested or used until you set it to false and restart.") : null,
+      h("div", { class: "field-grid" },
+        h("label", { class: "field-label" }, "Email",
+          f.user = h("input", { class: "field", type: "email", value: t.username || "", placeholder: "you@example.com",
+            autocomplete: "off", oninput: () => f.reset() })),
+        h("label", { class: "field-label" }, "Password",
+          f.pass = h("input", { class: "field", type: "password", autocomplete: "new-password",
+            placeholder: t.password_set ? "Saved · leave blank to keep it" : "Tapo password", oninput: () => f.reset() }))),
+      f.result,
+      h("div", { class: "form-actions" },
+        f.submit = h("button", { class: "btn-s primary", type: "submit" }, "Test & save"),
+        h("button", { class: "btn-s", type: "button", onclick: showTapo }, "Cancel"))));
+    f.user.focus();
+  }
+
+  const endAt = {}, total = {};
+  function syncStations() {
+    for (const st of data.stations) {
+      endAt[st.station] = Date.now() + st.remaining_seconds * 1000;
+      total[st.station] = st.total_seconds;
+      const el = cards[st.station];
+      if (!el) continue;
+      el.name.textContent = st.label;
+      el.dot.className = "dot " + (st.plug_online === false ? "offline" : st.plug_on ? "on" : "");
+      el.plug.replaceChildren(
+        st.plug_online === false ? h("span", { class: "offline-text" }, "Plug offline")
+          : st.plug_online === null ? "Checking plug…"
+          : `Plug ${st.plug_on ? "on" : "off"}`,
+        ` · ${st.ip}`);
+    }
+    tick();
+  }
+
+  function tick() {
+    for (const st of data.stations) {
+      const el = cards[st.station];
+      if (!el) continue;
+      const left = Math.max(0, Math.round((endAt[st.station] - Date.now()) / 1000));
+      const active = left > 0;
+      el.root.classList.toggle("active", active);
+      el.badge.textContent = active ? "In use" : "Available";
+      el.badge.className = "badge " + (active ? "busy" : "free");
+      el.countdown.textContent = active ? fmtLeft(left) : "--:--";
+      el.countdown.className = "countdown " + (!active ? "idle" : left <= 60 ? "critical" : left <= 300 ? "warning" : "");
+      el.ends.textContent = active
+        ? `Ends ${clock(endAt[st.station])} · ${Math.round(total[st.station] / 60)} min session`
+        : "No session";
+      el.stop.disabled = !active;
+    }
+  }
+
+  // Tap twice to confirm, instead of confirm(): many in-app and kiosk browsers silently
+  // answer "no" to it. Returns true on the second tap; the first arms the button for 4 s.
+  function confirmedTap(btn, prompt) {
+    if (btn.dataset.armed) { disarm(btn); return true; }
+    document.querySelectorAll("[data-armed]").forEach(disarm);  // one armed button at a time
+    btn.dataset.armed = "1";
+    btn.dataset.idleText = btn.textContent;
+    btn.classList.add("armed");
+    btn.textContent = prompt;
+    btn.disarmTimer = setTimeout(() => disarm(btn), 4000);
+    return false;
+  }
+
+  function disarm(btn) {
+    clearTimeout(btn.disarmTimer);
+    if (!btn.dataset.armed) return;
+    delete btn.dataset.armed;
+    btn.classList.remove("armed");
+    btn.textContent = btn.dataset.idleText;
+  }
+
+  async function addTime(id, minutes, btn) {
+    if (!confirmedTap(btn, `Confirm +${dur(minutes)}`)) return;
+    btn.disabled = true;
+    try {
+      await post(`/admin/stations/${encodeURIComponent(id)}/add?minutes=${minutes}`);
+      toast(`Added ${dur(minutes)} to ${stationLabel(id)}`);
+      await refresh();
+    } catch (e) { toast(e.message); }
+    btn.disabled = false;
+  }
+
+  async function stopStation(id, btn) {
+    if (!confirmedTap(btn, "Tap again to stop")) return;
+    btn.disabled = true;
+    try {
+      await post(`/admin/stations/${encodeURIComponent(id)}/stop`);
+      toast(`${stationLabel(id)} stopped`);
+      await refresh();
+    } catch (e) { toast(e.message); btn.disabled = false; }
+  }
+
+  // --- Revenue chart -------------------------------------------------------------
+  function niceScale(max) {
+    if (max <= 0) return { step: 10, top: 40 };
+    const rough = max / 4;
+    const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((x) => x >= rough);
+    return { step, top: Math.ceil(max / step - 1e-9) * step };
+  }
+
+  function barPath(x, y, w, hgt, r) {
+    r = Math.min(r, hgt, w / 2);
+    const b = y + hgt;
+    return `M${x},${b}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${b}Z`;
+  }
+
+  let chartKey = "";
+  function drawChart(force) {
+    const key = JSON.stringify(data.days) + $("chart").clientWidth;
+    if (!force && key === chartKey) return;
+    chartKey = key;
+
+    const box = $("chart"), tip = $("tip");
+    box.querySelector("svg")?.remove();
+    tip.hidden = true;
+
+    const W = box.clientWidth, TOP = 22, PLOT = 170, AXIS = 28, LEFT = 50, RIGHT = 6;
+    const H = TOP + PLOT + AXIS, plotW = W - LEFT - RIGHT;
+    const vals = data.days.map((d) => d.sen / 100);
+    const max = Math.max(...vals);
+    const { step, top } = niceScale(max);
+    const y = (v) => TOP + PLOT - (v / top) * PLOT;
+    const svg = s("svg", { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: "img",
+      "aria-label": "Revenue per day for the last 7 days. Use Show as table for exact values." });
+
+    for (let v = 0; v <= top + 1e-9; v += step) {
+      svg.append(s("line", { x1: LEFT, x2: W - RIGHT, y1: y(v), y2: y(v),
+        stroke: v === 0 ? "var(--axis)" : "var(--grid)", "stroke-width": 1, "shape-rendering": "crispEdges" }));
+      const tickText = "RM" + (Number.isInteger(v) ? v.toLocaleString("en-MY") : v.toFixed(2));
+      svg.append(s("text", { x: LEFT - 8, y: y(v) + 4, "text-anchor": "end", class: "tick" }, tickText));
+    }
+
+    const band = plotW / data.days.length;
+    const bw = Math.min(24, band * 0.56);
+    const maxIdx = vals.indexOf(max);
+    const bars = [];
+    data.days.forEach((d, i) => {
+      const v = vals[i], cx = LEFT + band * i + band / 2, yTop = y(v), hgt = TOP + PLOT - yTop;
+      const isToday = i === data.days.length - 1;
+      const bar = hgt > 0.5 ? s("path", { d: barPath(cx - bw / 2, yTop, bw, hgt, 4), class: "bar" }) : null;
+      if (bar) svg.append(bar);
+      bars.push(bar);
+      svg.append(s("text", { x: cx, y: H - 8, "text-anchor": "middle", class: "xlabel" + (isToday ? " today" : "") }, d.label));
+      // Label only today and the best day; the tooltip and table carry the rest.
+      if (v > 0 && (isToday || i === maxIdx)) {
+        svg.append(s("text", { x: cx, y: yTop - 7, "text-anchor": "middle", class: "vlabel" }, rm(d.sen)));
+      }
+      const hit = s("rect", { x: LEFT + band * i, y: TOP, width: band, height: PLOT + AXIS, class: "hit",
+        tabindex: 0, "aria-label": `${d.long}: ${rm(d.sen)}` });
+      const show = () => {
+        bars.forEach((b) => b && b.classList.remove("hover"));
+        if (bar) bar.classList.add("hover");
+        tip.querySelector("strong").textContent = rm(d.sen);
+        tip.querySelector("span").textContent = d.long;
+        tip.hidden = false;
+        const half = tip.offsetWidth / 2;
+        tip.style.left = Math.min(Math.max(cx, half), W - half) + "px";
+        tip.style.top = Math.min(yTop, TOP + PLOT) - 18 + "px";  // clear the bar's value label
+      };
+      const hide = () => { if (bar) bar.classList.remove("hover"); tip.hidden = true; };
+      hit.addEventListener("pointerenter", show);
+      hit.addEventListener("focus", show);
+      hit.addEventListener("pointerleave", hide);
+      hit.addEventListener("blur", hide);
+      svg.append(hit);
+    });
+    if (max === 0) {
+      svg.append(s("text", { x: LEFT + plotW / 2, y: TOP + PLOT / 2, "text-anchor": "middle", class: "empty" }, "No sales in the last 7 days"));
+    }
+    box.prepend(svg);
+
+    $("days-table").replaceChildren(...data.days.map((d) =>
+      h("tr", {}, h("td", {}, d.long), h("td", { class: "num" }, rm(d.sen)))));
+  }
+
+  // --- Pending checkouts + activity ---------------------------------------------
+  function renderPending() {
+    if (!data.pending.length) {
+      $("pending").replaceChildren(h("div", { class: "empty-row" }, "Nothing waiting."));
+      return;
+    }
+    $("pending").replaceChildren(h("table", {}, h("tbody", {}, data.pending.map((p) =>
+      h("tr", {},
+        h("td", {}, stationLabel(p.station)),
+        h("td", {}, `${dur(p.minutes)} · ${rm(p.sen)}`),
+        h("td", { class: "muted" }, ago(p.created_at)),
+        h("td", { class: "num" }, h("button", { class: "btn-s", type: "button", onclick: (e) => recheck(p, e.currentTarget) }, "Recheck")))))));
+  }
+
+  async function recheck(p, btn) {
+    btn.disabled = true;
+    btn.textContent = "Checking…";
+    try {
+      const r = await post(`/admin/purchases/${encodeURIComponent(p.id)}/recheck`);
+      toast(r.credited ? `Paid. ${dur(p.minutes)} added to ${stationLabel(p.station)}` : "CHIP says this one isn't paid.");
+      await refresh();
+    } catch (e) { toast(e.message); }
+    btn.disabled = false;
+    btn.textContent = "Recheck";
+  }
+
+  function renderActivity() {
+    if (!data.activity.length) {
+      $("activity").replaceChildren(h("tr", {}, h("td", { colspan: 4, class: "empty-row" }, "No activity yet.")));
+      return;
+    }
+    $("activity").replaceChildren(...data.activity.map((a) => {
+      const kind = a.kind === "payment" ? h("span", { class: "kind payment" }, "Payment")
+        : a.kind === "add" ? h("span", { class: "kind" }, "Free time")
+        : a.kind === "ip" || a.kind === "settings" ? h("span", { class: "kind" }, "Settings")
+        : h("span", { class: "kind stop" }, "Stopped");
+      const detail = a.kind === "payment" ? dur(a.minutes)
+        : a.kind === "add" ? `+${dur(a.minutes)} by staff`
+        : a.kind === "ip" ? `Plug IP ${a.detail}`
+        : a.kind === "settings" ? a.detail.charAt(0).toUpperCase() + a.detail.slice(1)
+        : "by staff";
+      return h("tr", {},
+        h("td", {}, when(a.at)),
+        h("td", {}, a.station ? stationLabel(a.station) : "All"),
+        h("td", {}, kind, " ", detail),
+        h("td", { class: "num" }, a.kind === "payment" ? rm(a.sen) : "—"));
+    }));
+  }
+
+  function renderAll() {
+    renderKpis();
+    syncStations();
+    drawChart();
+    renderPending();
+    renderActivity();
+    renderSettings();
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch("/admin/api/summary", { cache: "no-store" });
+      if (r.status === 403) return location.reload();
+      if (r.ok) {
+        data = await r.json();
+        const ids = data.stations.map((x) => x.station).join();
+        if (ids !== Object.keys(cards).join()) return location.reload();
+        renderAll();
+      }
+    } catch (_) { /* network blip: keep the last view */ }
+  }
+
+  buildStations();
+  renderAll();
+  setInterval(tick, 1000);
+  setInterval(refresh, 5000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+  let resizeTimer;
+  window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => drawChart(true), 150); });
+})();
+</script>
+{% endblock %}

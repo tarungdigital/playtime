@@ -1,0 +1,343 @@
+{% extends "base.html" %}
+{% block title %}{{ station | label }} · {{ shop_name }}{% endblock %}
+
+{% block head %}
+<style>
+  /* App-like touch behaviour */
+  html { -webkit-text-size-adjust: 100%; }
+  body { overscroll-behavior-y: none; -webkit-tap-highlight-color: transparent; }
+  .tile, .btn { touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  /* Sized so the whole page fits one phone screen above the pay bar: no scrolling needed. */
+  .wrap { padding-bottom: calc(92px + env(safe-area-inset-bottom)); }
+
+  /* Sticky app bar that frosts once content scrolls under it */
+  .top {
+    position: sticky; top: 0; z-index: 20; margin: -18px -16px 0;
+    padding: calc(12px + env(safe-area-inset-top)) 16px 12px;
+    background: rgba(11, 13, 18, .72);
+    -webkit-backdrop-filter: saturate(160%) blur(18px); backdrop-filter: saturate(160%) blur(18px);
+    border-bottom: 1px solid transparent; transition: border-color .2s;
+  }
+  .top.scrolled { border-bottom-color: var(--line); }
+
+  .hero { margin: 10px 0 0; text-align: center; }
+  .eyebrow { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; color: var(--muted); }
+  .hero h1 { margin: 1px 0 0; font-size: 26px; letter-spacing: -.4px; }
+
+  .banner {
+    display: flex; gap: 10px; align-items: flex-start; margin: 10px 0 0; padding: 11px 14px;
+    border-radius: 16px; font-size: 14.5px; line-height: 1.4; animation: drop .35s cubic-bezier(.2, .9, .3, 1.2);
+  }
+  @keyframes drop { from { opacity: 0; transform: translateY(-8px); } }
+  .banner[hidden] { display: none; }
+  .banner .icon { flex: none; width: 20px; height: 20px; margin-top: 1px; }
+  .banner.ok { background: var(--ok-soft); color: var(--ok); }
+  .banner.wait { background: var(--info-soft); color: #b9cbff; }
+  .banner.err { background: var(--danger-soft); color: #ff9aa5; }
+  .banner.warn { background: var(--warn-soft); color: var(--warn); }
+  .spinner {
+    flex: none; width: 18px; height: 18px; margin-top: 1px; border-radius: 50%;
+    border: 2.5px solid currentColor; border-right-color: transparent; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Countdown ring */
+  /* The ring shrinks on short screens; text inside scales with the ring (cqi). */
+  .timer {
+    position: relative; width: min(60vw, 240px); width: min(60vw, 240px, 31svh);
+    aspect-ratio: 1; margin: 12px auto 2px; container-type: inline-size;
+  }
+  /* overflow: visible lets the glow spread past the SVG box instead of being cut off square. */
+  .ring { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
+  .ring circle { fill: none; stroke-width: 9; }
+  .ring .track { stroke: var(--surface-2); }
+  .ring .progress {
+    stroke: var(--ring, var(--ok)); stroke-linecap: round;
+    transition: stroke-dashoffset 1s linear, stroke .4s ease;
+    filter: drop-shadow(0 0 8px var(--ring-glow, rgba(46, 230, 166, .45)));
+  }
+  .readout { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; padding: 0 12%; }
+  .time {
+    font-size: clamp(36px, 11vw, 52px); font-size: 21cqi; font-weight: 750; letter-spacing: -1px; line-height: 1;
+    font-variant-numeric: tabular-nums; color: var(--readout, var(--text));
+  }
+  .sub { margin-top: 8px; font-size: 13.5px; font-size: clamp(12px, 6.4cqi, 14px); color: var(--muted); }
+  .sub b { color: var(--text); font-weight: 600; }
+
+  body[data-phase="idle"] .progress { opacity: 0; }
+  body[data-phase="warning"] { --ring: var(--warn); --ring-glow: rgba(255, 178, 36, .45); }
+  body[data-phase="critical"] { --ring: var(--danger); --ring-glow: rgba(255, 77, 94, .55); --readout: var(--danger); }
+  body[data-phase="critical"] .timer { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { transform: scale(1.025); } }
+
+  /* Hour picker */
+  .section-title { margin: 14px 2px 8px; font-size: 12px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
+  /* 3 across, or 2 across (.two-up) for 2 or 4 options. In 3 across, a short last row
+     stretches to fill the width (6-column grid, tiles span 2). */
+  .tiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+  .tile { position: relative; display: block; cursor: pointer; grid-column: span 2; }
+  .tiles.two-up .tile { grid-column: span 3; }
+  .tiles:not(.two-up) .tile:last-child:nth-child(3n + 1) { grid-column: span 6; }
+  .tiles:not(.two-up) .tile:last-child:nth-child(3n + 2),
+  .tiles:not(.two-up) .tile:nth-last-child(2):nth-child(3n + 1) { grid-column: span 3; }
+  .tile input { position: absolute; opacity: 0; pointer-events: none; }
+  .tile-body {
+    position: relative; display: flex; flex-direction: column; gap: 2px; padding: 11px 12px 10px;
+    border-radius: 16px; background: var(--surface); border: 1.5px solid var(--line);
+    transition: transform .12s ease, border-color .15s, background .15s;
+  }
+  .tile:active .tile-body { transform: scale(.965); }
+  .tile-hours { font-size: 16.5px; font-weight: 700; letter-spacing: -.2px; white-space: nowrap; }
+  .tile-price { font-size: 14px; color: var(--muted); }
+  .tile-check {
+    position: absolute; top: 9px; right: 9px; width: 18px; height: 18px; border-radius: 50%;
+    display: grid; place-items: center; border: 1.5px solid var(--line); transition: background .15s, border-color .15s;
+  }
+  .tile-check svg { opacity: 0; transition: opacity .15s; }
+  .tile input:checked + .tile-body { border-color: var(--accent); background: var(--accent-soft); }
+  .tile input:checked + .tile-body .tile-price { color: var(--text); }
+  .tile input:checked + .tile-body .tile-check { background: var(--accent); border-color: var(--accent); }
+  .tile input:checked + .tile-body .tile-check svg { opacity: 1; }
+  .tile input:focus-visible + .tile-body { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .secure { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 10px 0 0; font-size: 12px; color: var(--muted); text-align: center; }
+  .secure svg { flex: none; }
+
+  /* Sticky bottom pay bar */
+  .paybar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    background: rgba(17, 21, 29, .82);
+    -webkit-backdrop-filter: saturate(160%) blur(22px); backdrop-filter: saturate(160%) blur(22px);
+    border-top: 1px solid var(--line);
+    animation: rise .45s cubic-bezier(.2, .9, .3, 1) both;
+  }
+  @keyframes rise { from { transform: translateY(100%); } }
+  .paybar-inner { max-width: 440px; margin: 0 auto; display: flex; align-items: center; gap: 14px; }
+  .total { flex: none; min-width: 84px; line-height: 1.15; }
+  .total small { display: block; font-size: 12.5px; color: var(--muted); }
+  .total strong { display: block; font-size: 22px; font-weight: 750; letter-spacing: -.4px; }
+  .btn {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; height: 54px;
+    border: 0; border-radius: 16px; background: var(--accent); color: #fff;
+    font: inherit; font-size: 17px; font-weight: 700; cursor: pointer;
+    box-shadow: 0 8px 24px rgba(255, 61, 82, .32);
+    transition: transform .12s ease, filter .12s, opacity .15s;
+  }
+  .btn:active { transform: scale(.97); filter: brightness(.92); }
+  .btn[disabled] { opacity: .65; cursor: progress; box-shadow: none; }
+  .btn .spinner { margin: 0; width: 18px; height: 18px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    body[data-phase="critical"] .timer, .spinner, .paybar, .banner { animation: none; }
+    .ring .progress, .tile-body, .btn { transition: none; }
+  }
+</style>
+{% endblock %}
+
+{% block badge %}<span class="badge" id="badge">…</span>{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">Station</p>
+  <h1>{{ station | label }}</h1>
+</section>
+
+<div class="banner ok" id="banner-paid" hidden>
+  <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor" opacity=".2"/><path d="M6 10.3l2.6 2.6L14.2 7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <span>Payment received. The console is powering on. Have fun!</span>
+</div>
+<div class="banner wait" id="banner-confirming" hidden>
+  <span class="spinner" aria-hidden="true"></span>
+  <span id="confirming-text">Confirming your payment…</span>
+</div>
+<div class="banner err" id="banner-failed" hidden>
+  <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor" opacity=".2"/><path d="M7 7l6 6M13 7l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  <span>Payment wasn't completed. You can try again.</span>
+</div>
+<div class="banner err" id="banner-error" hidden>
+  <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor" opacity=".2"/><path d="M7 7l6 6M13 7l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  <span>Couldn't open the payment page. Please try again in a moment.</span>
+</div>
+<div class="banner warn" id="banner-offline" hidden>
+  <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5l8 14H2l8-14z" fill="currentColor" opacity=".2"/><path d="M10 8v4M10 14.5v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  <span>This station's power switch isn't responding. Please let the staff know.</span>
+</div>
+
+<section class="timer" aria-live="polite">
+  <svg class="ring" viewBox="0 0 200 200" aria-hidden="true">
+    <circle class="track" cx="100" cy="100" r="88"/>
+    <circle class="progress" id="progress" cx="100" cy="100" r="88"/>
+  </svg>
+  <div class="readout">
+    <div class="time" id="time">{{ price_sen | rm }}</div>
+    <div class="sub" id="sub">per hour</div>
+  </div>
+</section>
+
+<form method="post" action="/s/{{ station }}/pay" id="pay-form">
+  <h2 class="section-title" id="pay-title">Choose your time</h2>
+  <div class="tiles{{ ' two-up' if options | length in (2, 4) }}">
+    {% for minutes, sen in options.items() %}
+    <label class="tile">
+      <input type="radio" name="minutes" value="{{ minutes }}" data-label="{{ minutes | duration }}"
+             data-price="{{ sen }}" {% if minutes == default_minutes %}checked{% endif %}>
+      <span class="tile-body">
+        <span class="tile-hours">{{ minutes | duration }}</span>
+        <span class="tile-price">{{ sen | rm }}</span>
+        <span class="tile-check" aria-hidden="true">
+          <svg width="10" height="10" viewBox="0 0 12 12"><path d="M2.5 6.2l2.3 2.3 4.7-4.9" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+      </span>
+    </label>
+    {% endfor %}
+  </div>
+  <p class="secure">
+    <svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true"><rect x="2.5" y="6" width="9" height="6.5" rx="1.5" fill="currentColor"/><path d="M4.5 6V4.5a2.5 2.5 0 0 1 5 0V6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+    Secure payment by CHIP · DuitNow QR, FPX, e-wallets
+  </p>
+
+  <div class="paybar">
+    <div class="paybar-inner">
+      <div class="total">
+        <small id="sum-hours">{{ default_minutes | duration }}</small>
+        <strong id="sum-price">{{ options[default_minutes] | rm }}</strong>
+      </div>
+      <button class="btn" type="submit" id="pay-btn">Pay now</button>
+    </div>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const STATION = {{ station | tojson }};
+  const PRICE_SEN = {{ price_sen | tojson }};
+  let notice = {{ notice | tojson }};
+  let state = {{ state | tojson }};
+
+  const $ = (id) => document.getElementById(id);
+  const CIRC = 2 * Math.PI * 88;
+  const progress = $("progress");
+  progress.style.strokeDasharray = CIRC;
+
+  let endAt = 0;      // local clock ms when the session ends
+  let total = 0;      // session length in seconds, for the ring
+  let wasActive = false;
+  let finishedHere = false;
+  let submitting = false;
+  const confirmStarted = Date.now();
+
+  const rm = (sen) => "RM" + (sen % 100 ? (sen / 100).toFixed(2) : sen / 100);
+  const pad = (n) => String(n).padStart(2, "0");
+  const fmt = (s) => {
+    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+    return h ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+  };
+  const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const buzz = () => { try { navigator.vibrate?.(8); } catch (_) {} };  // Android only; iOS ignores it
+
+  function apply(s) {
+    state = s;
+    endAt = Date.now() + s.remaining_seconds * 1000;
+    total = s.total_seconds;
+    if (s.active) finishedHere = false;
+    $("banner-offline").hidden = s.plug_online !== false;
+
+    if (notice === "paid") {
+      const confirmed = s.active;
+      $("banner-paid").hidden = !confirmed;
+      $("banner-confirming").hidden = confirmed;
+      if (!confirmed && Date.now() - confirmStarted > 90000) {
+        $("confirming-text").textContent =
+          "Still waiting for the payment to confirm. If you were charged, please show your receipt to the staff.";
+      }
+      if (confirmed) {
+        notice = "shown";
+        history.replaceState(null, "", location.pathname);
+        buzz();
+      }
+    } else if (notice === "failed" || notice === "error") {
+      $("banner-" + notice).hidden = false;
+      history.replaceState(null, "", location.pathname);
+      notice = "shown";
+    }
+    tick();
+  }
+
+  function tick() {
+    const left = Math.max(0, Math.round((endAt - Date.now()) / 1000));
+    const active = left > 0;
+    if (wasActive && !active) finishedHere = true;
+    wasActive = active;
+
+    document.body.dataset.phase = !active ? "idle" : left <= 60 ? "critical" : left <= 300 ? "warning" : "active";
+
+    const badge = $("badge");
+    badge.textContent = active ? "In use" : "Available";
+    badge.className = "badge " + (active ? "busy" : "free");
+
+    if (active) {
+      $("time").textContent = fmt(left);
+      $("sub").innerHTML = left <= 300
+        ? "<b>Almost up!</b> Add time below"
+        : `left · ends <b>${clock(endAt)}</b>`;
+      progress.style.strokeDashoffset = CIRC * (1 - left / Math.max(total, left, 1));
+    } else {
+      $("time").textContent = rm(PRICE_SEN);
+      $("sub").innerHTML = finishedHere ? "<b>Time's up!</b> Thanks for playing" : "per hour";
+      progress.style.strokeDashoffset = CIRC;
+    }
+    $("pay-title").textContent = active ? "Add more time" : "Choose your time";
+    updateBar();
+  }
+
+  function updateBar() {
+    const choice = document.querySelector("input[name=minutes]:checked");
+    $("sum-hours").textContent = choice.dataset.label;
+    $("sum-price").textContent = rm(Number(choice.dataset.price));
+    if (submitting) return;
+    const btn = $("pay-btn");
+    // Don't let someone pay twice while their first payment is still confirming.
+    const confirming = notice === "paid";
+    btn.disabled = confirming;
+    btn.textContent = confirming ? "Confirming…" : wasActive ? "Add time" : "Pay now";
+  }
+
+  async function poll() {
+    try {
+      const r = await fetch(`/api/stations/${encodeURIComponent(STATION)}`, { cache: "no-store" });
+      if (r.ok) apply(await r.json());
+    } catch (_) { /* offline for a moment; keep counting locally */ }
+  }
+
+  $("pay-form").addEventListener("change", () => { buzz(); updateBar(); });
+  $("pay-form").addEventListener("submit", (e) => {
+    if (submitting) return e.preventDefault();
+    submitting = true;
+    buzz();
+    const btn = $("pay-btn");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner" aria-hidden="true"></span>Opening payment…';
+  });
+  // Re-enable the button if the customer comes back with the browser's back button.
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted) { submitting = false; updateBar(); }
+  });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+
+  const top = document.querySelector(".top");
+  const onScroll = () => top.classList.toggle("scrolled", window.scrollY > 4);
+  window.addEventListener("scroll", onScroll, { passive: true });
+  onScroll();
+
+  apply(state);
+  setInterval(tick, 1000);
+  // Poll fast while waiting for a payment to confirm, otherwise every 5 s.
+  (function loop() {
+    setTimeout(async () => { await poll(); loop(); }, notice === "paid" ? 2000 : 5000);
+  })();
+})();
+</script>
+{% endblock %}

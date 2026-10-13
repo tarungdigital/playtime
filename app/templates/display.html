@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}{{ station | label }} · {{ shop_name }}{% endblock %}
+
+{% block head %}
+<meta name="robots" content="noindex">
+<style>
+  html, body { height: 100%; overflow: hidden; }
+  body { --ring: var(--ok); --ring-glow: rgba(46, 230, 166, .45); }
+  body[data-phase="warning"] { --ring: var(--warn); --ring-glow: rgba(255, 178, 36, .45); }
+  body[data-phase="critical"] { --ring: var(--danger); --ring-glow: rgba(255, 77, 94, .55); }
+
+  .screen {
+    position: fixed; inset: 0; display: grid; grid-template-rows: auto 1fr auto;
+    gap: 2vmin; padding: clamp(16px, 3.5vmin, 44px);
+  }
+  .bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .bar .brand { font-size: clamp(16px, 2.8vmin, 30px); gap: 1.4vmin; }
+  .bar .brand-mark { width: clamp(30px, 5vmin, 54px); height: clamp(30px, 5vmin, 54px); border-radius: 1.6vmin; }
+  .bar .brand-mark svg { width: 45%; height: 45%; }
+  .bar .badge { font-size: clamp(13px, 2.2vmin, 24px); padding: .5em 1.1em; }
+
+  .stage { position: relative; min-height: 0; }
+  .scene {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    gap: clamp(24px, 7vmin, 110px); transition: opacity .6s ease, transform .6s ease;
+  }
+  body:not([data-mode="idle"]) .idle-scene,
+  body:not([data-mode="playing"]) .play-scene { opacity: 0; transform: scale(.97); pointer-events: none; }
+
+  .eyebrow { margin: 0; font-size: clamp(12px, 2vmin, 22px); font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); }
+  .name { margin: .1em 0 0; font-size: clamp(30px, 7vmin, 92px); line-height: 1.05; letter-spacing: -.02em; }
+
+  /* Idle: big QR */
+  .qr-card {
+    flex: none; padding: clamp(14px, 3vmin, 34px); border-radius: clamp(18px, 4vmin, 44px); background: #fff;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 30px 80px rgba(0, 0, 0, .5), 0 0 120px rgba(255, 61, 82, .18);
+  }
+  .qr-card svg { display: block; width: min(52vmin, 560px); height: auto; }
+  .cta { margin: .5em 0 0; font-size: clamp(32px, 8vmin, 104px); font-weight: 800; line-height: 1; letter-spacing: -.03em; }
+  .price { margin: .55em 0 0; font-size: clamp(18px, 3.6vmin, 44px); color: var(--muted); }
+  .price b { color: var(--text); }
+  .steps { display: flex; gap: 1.4vmin; margin: 3.2vmin 0 0; padding: 0; list-style: none; flex-wrap: wrap; }
+  .steps li {
+    display: flex; align-items: center; gap: .55em; padding: .5em 1em .5em .5em; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--line); font-size: clamp(14px, 2.3vmin, 26px); font-weight: 600;
+  }
+  .steps b {
+    display: grid; place-items: center; width: 1.7em; height: 1.7em; border-radius: 50%;
+    background: var(--accent); color: #fff; font-size: .85em;
+  }
+  .methods { margin: 2.4vmin 0 0; font-size: clamp(12px, 1.9vmin, 22px); color: var(--muted); }
+
+  /* Playing: big countdown */
+  .ring-wrap { position: relative; flex: none; width: min(66vmin, 720px); aspect-ratio: 1; }
+  /* overflow: visible lets the glow spread past the SVG box instead of being cut off square. */
+  .ring { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
+  .ring circle { fill: none; stroke-width: 8; }
+  .ring .track { stroke: var(--surface-2); }
+  .ring .progress {
+    stroke: var(--ring); stroke-linecap: round; transition: stroke-dashoffset 1s linear, stroke .4s ease;
+    filter: drop-shadow(0 0 1.2vmin var(--ring-glow));
+  }
+  .readout { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+  .time {
+    font-size: clamp(48px, 14vmin, 168px); font-weight: 750; line-height: 1; letter-spacing: -.03em;
+    font-variant-numeric: tabular-nums;
+  }
+  body[data-phase="critical"] .time { color: var(--danger); }
+  body[data-phase="critical"] .ring-wrap { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { transform: scale(1.02); } }
+  .sub { margin-top: 1.4vmin; font-size: clamp(14px, 2.8vmin, 32px); color: var(--muted); }
+  .sub b { color: var(--text); }
+  .ends { margin: .6em 0 0; font-size: clamp(16px, 3.4vmin, 40px); color: var(--muted); }
+  .ends b { color: var(--text); }
+  .add { display: flex; align-items: center; gap: 2.4vmin; margin-top: 4vmin; }
+  .add .qr-card { padding: 1.4vmin; border-radius: 2vmin; box-shadow: none; }
+  .add .qr-card svg { width: min(20vmin, 220px); }
+  .add strong { display: block; font-size: clamp(16px, 3vmin, 34px); }
+  .add span { font-size: clamp(13px, 2.2vmin, 26px); color: var(--muted); }
+
+  /* Footer notices */
+  .foot { display: flex; justify-content: center; min-height: 1px; }
+  .alert {
+    display: flex; align-items: center; gap: .6em; padding: .7em 1.2em; border-radius: 999px;
+    background: var(--warn-soft); color: var(--warn); font-size: clamp(13px, 2.2vmin, 24px); font-weight: 600;
+  }
+  .alert[hidden], .pill[hidden] { display: none; }
+  .pill { padding: .5em 1em; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: clamp(12px, 1.8vmin, 20px); }
+
+  /* Full-screen moments: paid / time added / time's up */
+  .overlay {
+    position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; text-align: center;
+    background: rgba(11, 13, 18, .94); transition: opacity .4s ease;
+  }
+  .overlay.hide { opacity: 0; pointer-events: none; }
+  .overlay-icon { width: clamp(80px, 18vmin, 200px); height: clamp(80px, 18vmin, 200px); margin: 0 auto; }
+  .overlay h2 { margin: 3vmin 0 0; font-size: clamp(34px, 9vmin, 120px); line-height: 1; letter-spacing: -.03em; }
+  .overlay p { margin: 2vmin 0 0; font-size: clamp(16px, 3.4vmin, 40px); color: var(--muted); }
+  .overlay.show .overlay-icon { animation: pop .5s cubic-bezier(.2, 1.4, .4, 1); }
+  @keyframes pop { from { transform: scale(.4); opacity: 0; } }
+
+  @media (orientation: portrait) {
+    .scene { flex-direction: column; text-align: center; gap: 4vmin; }
+    .steps, .add { justify-content: center; }
+    .qr-card svg { width: min(62vmin, 560px); }
+    .ring-wrap { width: min(80vmin, 720px); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .scene, .overlay { transition: none; }
+    body[data-phase="critical"] .ring-wrap, .overlay.show .overlay-icon { animation: none; }
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="screen">
+  <header class="bar">
+    {% include "_brand.html" %}
+    <span class="badge" id="badge">…</span>
+  </header>
+
+  <main class="stage">
+    <section class="scene idle-scene">
+      <div class="qr-card" role="img" aria-label="QR code to pay for {{ station | label }}">{{ qr_svg | safe }}</div>
+      <div>
+        <p class="eyebrow">Station</p>
+        <h1 class="name">{{ station | label }}</h1>
+        <p class="cta">Scan to play</p>
+        <p class="price"><b>{{ price_sen | rm }}</b> per hour</p>
+        <ol class="steps">
+          <li><b>1</b>Scan</li>
+          <li><b>2</b>Pay</li>
+          <li><b>3</b>Play</li>
+        </ol>
+        <p class="methods">DuitNow QR · FPX · e-wallets · cards</p>
+      </div>
+    </section>
+
+    <section class="scene play-scene">
+      <div class="ring-wrap">
+        <svg class="ring" viewBox="0 0 200 200" aria-hidden="true">
+          <circle class="track" cx="100" cy="100" r="88"/>
+          <circle class="progress" id="progress" cx="100" cy="100" r="88"/>
+        </svg>
+        <div class="readout">
+          <div class="time" id="time">00:00</div>
+          <div class="sub" id="sub">left</div>
+        </div>
+      </div>
+      <div>
+        <p class="eyebrow">Now playing</p>
+        <h1 class="name">{{ station | label }}</h1>
+        <p class="ends" id="ends"></p>
+        <div class="add">
+          <div class="qr-card" role="img" aria-label="QR code to add time">{{ qr_svg | safe }}</div>
+          <div><strong>Scan to add time</strong><span>{{ price_sen | rm }} per hour</span></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="alert" id="alert-offline" hidden>⚠ Power switch isn't responding. Please tell the staff.</div>
+    <div class="pill" id="reconnecting" hidden>Reconnecting…</div>
+  </footer>
+</div>
+
+<div class="overlay hide" id="overlay" aria-live="assertive">
+  <div>
+    <svg class="overlay-icon" id="overlay-icon" viewBox="0 0 100 100" aria-hidden="true"></svg>
+    <h2 id="overlay-title"></h2>
+    <p id="overlay-sub"></p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const STATION = {{ station | tojson }};
+  const LABEL = {{ (station | label) | tojson }};
+  let state = {{ state | tojson }};
+
+  const $ = (id) => document.getElementById(id);
+  const CIRC = 2 * Math.PI * 88;
+  $("progress").style.strokeDasharray = CIRC;
+
+  const pad = (n) => String(n).padStart(2, "0");
+  const fmt = (s) => {
+    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+    return h ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+  };
+  const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+  const ICONS = {
+    paid: '<circle cx="50" cy="50" r="46" fill="rgba(46,230,166,.15)"/><path d="M30 51l13 13 27-28" fill="none" stroke="#2ee6a6" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>',
+    added: '<circle cx="50" cy="50" r="46" fill="rgba(46,230,166,.15)"/><path d="M50 30v40M30 50h40" fill="none" stroke="#2ee6a6" stroke-width="7" stroke-linecap="round"/>',
+    done: '<circle cx="50" cy="50" r="46" fill="rgba(255,61,82,.15)"/><circle cx="50" cy="52" r="24" fill="none" stroke="#ff3d52" stroke-width="6"/><path d="M50 40v13l8 6M44 22h12" fill="none" stroke="#ff3d52" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>',
+  };
+  let overlayKind = null, overlayTimer;
+  function showOverlay(kind, title, sub, ms) {
+    if (overlayKind === kind) return;  // already showing this moment
+    overlayKind = kind;
+    $("overlay-icon").innerHTML = ICONS[kind];  // static markup above, no user data
+    $("overlay-title").textContent = title;
+    $("overlay-sub").textContent = sub;
+    const o = $("overlay");
+    o.classList.remove("hide", "show");
+    void o.offsetWidth;  // restart the pop animation
+    o.classList.add("show");
+    clearTimeout(overlayTimer);
+    overlayTimer = setTimeout(() => { o.classList.add("hide"); overlayKind = null; }, ms);
+  }
+
+  let endAt = 0, total = 0, mode = null;
+
+  function apply(s) {
+    const newEnd = Date.now() + s.remaining_seconds * 1000;
+    const wasPlaying = mode === "playing";
+    // Someone paid while time was running: celebrate the extension.
+    if (wasPlaying && s.active && newEnd - endAt > 60000) {
+      showOverlay("added", "Time added!", `Now ends at ${clock(newEnd)}`, 4500);
+    }
+    // Starting from idle only counts as a new payment if it's a real session (avoids clock-edge flicker).
+    if (mode === "idle" && s.remaining_seconds > 60) {
+      showOverlay("paid", "Payment received!", `${LABEL} is powering on. Enjoy!`, 4500);
+    }
+    state = s;
+    endAt = newEnd;
+    total = s.total_seconds;
+    $("alert-offline").hidden = s.plug_online !== false;
+    tick();
+  }
+
+  function tick() {
+    const left = Math.max(0, Math.round((endAt - Date.now()) / 1000));
+    const playing = left > 0;
+    if (mode === "playing" && !playing) {
+      showOverlay("done", "Time's up!", "Thanks for playing. Scan the code to play again.", 8000);
+    }
+    mode = playing ? "playing" : "idle";
+    document.body.dataset.mode = mode;
+    document.body.dataset.phase = !playing ? "" : left <= 60 ? "critical" : left <= 300 ? "warning" : "normal";
+
+    const badge = $("badge");
+    badge.textContent = playing ? "In use" : "Available";
+    badge.className = "badge " + (playing ? "busy" : "free");
+
+    if (playing) {
+      $("time").textContent = fmt(left);
+      $("sub").innerHTML = left <= 300 ? "<b>Almost up!</b>" : "left";
+      $("ends").innerHTML = `Ends at <b>${clock(endAt)}</b>`;
+      $("progress").style.strokeDashoffset = CIRC * (1 - left / Math.max(total, left, 1));
+    }
+  }
+
+  const loadedAt = Date.now();
+  let failures = 0;
+  async function poll() {
+    try {
+      const r = await fetch(`/api/stations/${encodeURIComponent(STATION)}`, { cache: "no-store" });
+      if (!r.ok) throw new Error(r.status);
+      failures = 0;
+      apply(await r.json());
+    } catch (_) {
+      failures++;
+    }
+    $("reconnecting").hidden = failures < 3;
+    // Long-running screen: reload now and then (only while idle) to pick up updates.
+    if (mode === "idle" && Date.now() - loadedAt > 6 * 3600 * 1000) location.reload();
+  }
+
+  // Keep the screen awake and go full screen on the first tap.
+  async function keepAwake() {
+    try { await navigator.wakeLock?.request("screen"); } catch (_) {}
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { keepAwake(); poll(); } });
+  document.addEventListener("click", () => document.documentElement.requestFullscreen?.().catch(() => {}), { once: true });
+  keepAwake();
+
+  apply(state);
+  setInterval(tick, 1000);
+  setInterval(poll, 3000);
+})();
+</script>
+{% endblock %}

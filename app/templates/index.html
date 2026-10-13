@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block head %}
+<style>
+  h1 { margin: 26px 0 14px; font-size: 24px; }
+  .list { display: grid; gap: 10px; }
+  .row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px;
+    border-radius: 16px; background: var(--surface); border: 1px solid var(--line); text-decoration: none;
+  }
+  .row strong { font-size: 17px; }
+  .row .muted { font-size: 14px; font-variant-numeric: tabular-nums; }
+  .admin-link { text-decoration: none; }
+  .admin-link:hover { color: var(--text); border-color: var(--muted); }
+</style>
+{% endblock %}
+
+{% block badge %}<a class="badge admin-link" href="/admin">Admin</a>{% endblock %}
+
+{% block content %}
+<h1>Stations</h1>
+<div class="list">
+  {% for s in stations %}
+  <a class="row" href="/d/{{ s.station }}">
+    <div>
+      <strong>{{ s.station | label }}</strong>
+      <div class="muted">
+        {% if s.active %}{{ s.remaining_seconds // 60 }} min left{% else %}Ready to play{% endif %}
+        {% if s.plug_online == false %} · plug offline{% endif %}
+      </div>
+    </div>
+    <span class="badge {{ 'busy' if s.active else 'free' }}">{{ 'In use' if s.active else 'Available' }}</span>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}
