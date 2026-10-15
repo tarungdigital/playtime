@@ -36,7 +36,9 @@
     box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 30px 80px rgba(0, 0, 0, .5), 0 0 120px rgba(255, 61, 82, .18);
   }
   .qr-card svg { display: block; width: min(52vmin, 560px); height: auto; }
-  .cta { margin: .5em 0 0; font-size: clamp(32px, 8vmin, 104px); font-weight: 800; line-height: 1; letter-spacing: -.03em; }
+  /* QR code with "Scan to play" centred underneath it */
+  .qr-col { flex: none; display: flex; flex-direction: column; align-items: center; gap: 2.6vmin; }
+  .cta { margin: 0; font-size: clamp(28px, 6.5vmin, 84px); font-weight: 800; line-height: 1; letter-spacing: -.03em; text-align: center; }
   .price { margin: .55em 0 0; font-size: clamp(18px, 3.6vmin, 44px); color: var(--muted); }
   .price b { color: var(--text); }
   .steps { display: flex; gap: 1.4vmin; margin: 3.2vmin 0 0; padding: 0; list-style: none; flex-wrap: wrap; }
@@ -102,7 +104,7 @@
   @media (orientation: portrait) {
     .scene { flex-direction: column; text-align: center; gap: 4vmin; }
     .steps, .add { justify-content: center; }
-    .qr-card svg { width: min(62vmin, 560px); }
+    .qr-card svg { width: min(56vmin, 560px); }
     .ring-wrap { width: min(80vmin, 720px); }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -121,11 +123,13 @@
 
   <main class="stage">
     <section class="scene idle-scene">
-      <div class="qr-card" role="img" aria-label="QR code to pay for {{ station | label }}">{{ qr_svg | safe }}</div>
+      <div class="qr-col">
+        <div class="qr-card" role="img" aria-label="QR code to pay for {{ station | label }}">{{ qr_svg | safe }}</div>
+        <p class="cta">Scan to play</p>
+      </div>
       <div>
         <p class="eyebrow">Station</p>
         <h1 class="name">{{ station | label }}</h1>
-        <p class="cta">Scan to play</p>
         <p class="price"><b>{{ price_sen | rm }}</b> per hour</p>
         <ol class="steps">
           <li><b>1</b>Scan</li>
