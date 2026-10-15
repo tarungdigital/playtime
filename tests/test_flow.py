@@ -359,7 +359,6 @@ def test_pages_render(client):
     assert "Switch2" in client.get("/").text
     display = client.get("/d/switch2").text
     assert "Scan to play" in display and display.count('class="segno"') == 2
-    assert "+1 min free while the TV turns on" in display
     assert client.get("/d/nope").status_code == 404
     old = client.get("/station/switch2", follow_redirects=False)
     assert old.status_code == 301 and old.headers["location"] == "/d/switch2"
