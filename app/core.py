@@ -53,6 +53,14 @@ def duration(minutes: int) -> str:
     return f"{h} hr {m} min"
 
 
+def warmup() -> str:
+    """The free time a session starts with, for the screens: 60 -> '1 min', 90 -> '90 sec', 0 -> ''"""
+    s = config.WARMUP_SECONDS
+    if s <= 0:
+        return ""
+    return duration(s // 60) if s % 60 == 0 else f"{s} sec"
+
+
 METHOD_NAMES = {
     "duitnow_qr": "DuitNow QR", "dnqr": "DuitNow QR", "fpx": "FPX", "fpx_b2b1": "FPX Business",
     "razer_tng": "Touch 'n Go", "razer_grabpay": "GrabPay", "razer_shopeepay": "ShopeePay",

@@ -97,7 +97,7 @@ def test_half_hour_option_costs_rm5_and_adds_30_minutes(client, chip_purchases):
     assert db.get_purchase(pid)["amount_sen"] == 500
     chip_purchases[pid]["status"] = "paid"
     send_callback(client, chip_purchases[pid])
-    assert 1790 < remaining(client) <= 1800
+    assert 1790 < remaining(client) - config.WARMUP_SECONDS <= 1800
     page = client.get("/s/switch1").text
     assert "30 min" in page and "RM5" in page
 
@@ -114,7 +114,7 @@ def test_paid_callback_credits_once_and_turns_plug_on(client, chip_purchases):
     chip_purchases[pid]["status"] = "paid"
     assert send_callback(client, chip_purchases[pid]).status_code == 200
     assert send_callback(client, chip_purchases[pid]).status_code == 200  # duplicate delivery
-    assert 3590 < remaining(client) <= 3600
+    assert 3590 < remaining(client) - config.WARMUP_SECONDS <= 3600
     run_sync(client)
     assert plug._dry_run_state[IP] is True
 
@@ -139,8 +139,9 @@ def test_second_purchase_extends_running_session(client, chip_purchases):
         chip_purchases[pid]["status"] = "paid"
         send_callback(client, chip_purchases[pid])
     state = client.get("/api/stations/switch1").json()
-    assert 3 * 3600 - 10 < state["remaining_seconds"] <= 3 * 3600
-    assert state["total_seconds"] == pytest.approx(3 * 3600, abs=2)
+    # Warm-up time is added once, when the session starts, not again on the extension.
+    assert 3 * 3600 - 10 < state["remaining_seconds"] - config.WARMUP_SECONDS <= 3 * 3600
+    assert state["total_seconds"] == pytest.approx(3 * 3600 + config.WARMUP_SECONDS, abs=2)
 
 
 def test_return_from_checkout_credits_without_callback(client, chip_purchases):
@@ -358,6 +359,7 @@ def test_pages_render(client):
     assert "Switch2" in client.get("/").text
     display = client.get("/d/switch2").text
     assert "Scan to play" in display and display.count('class="segno"') == 2
+    assert "+1 min free while the TV turns on" in display
     assert client.get("/d/nope").status_code == 404
     old = client.get("/station/switch2", follow_redirects=False)
     assert old.status_code == 301 and old.headers["location"] == "/d/switch2"

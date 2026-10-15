@@ -193,11 +193,13 @@ def _session(c, station: str) -> tuple[float, float]:
 
 
 def _add_time(c, station: str, seconds: float) -> float:
-    """Start a new session, or extend the running one from its current end."""
+    """Start a new session (plus warm-up time for the TV to turn on), or extend the
+    running one from its current end."""
     now = time.time()
     started_at, ends_at = _session(c, station)
     if ends_at <= now:
         started_at = ends_at = now
+        seconds += config.WARMUP_SECONDS
     new_end = ends_at + seconds
     c.execute(
         "INSERT INTO stations (station, started_at, ends_at) VALUES (?, ?, ?)"

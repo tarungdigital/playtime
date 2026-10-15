@@ -12,7 +12,7 @@ from fastapi.responses import RedirectResponse
 
 from . import admin, chip, config, db
 from .core import (check_payment_methods, credit_if_paid, duration, enforce_loop, hourly_sen, label,
-                   load_config, log, options, plug_online, spawn, state, stations, templates)
+                   load_config, log, options, plug_online, spawn, state, stations, templates, warmup)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -119,6 +119,7 @@ async def station_display(request: Request, station: str):
         "price_sen": hourly_sen(),
         "qr_svg": _qr_svg(url),
         "pay_url": url,
+        "warmup": warmup(),
     })
 
 

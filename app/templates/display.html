@@ -41,6 +41,7 @@
   .cta { margin: 0; font-size: clamp(28px, 6.5vmin, 84px); font-weight: 800; line-height: 1; letter-spacing: -.03em; text-align: center; }
   .price { margin: .55em 0 0; font-size: clamp(18px, 3.6vmin, 44px); color: var(--muted); }
   .price b { color: var(--text); }
+  .bonus { margin: .5em 0 0; font-size: clamp(14px, 2.4vmin, 28px); font-weight: 600; color: var(--ok); }
   .steps { display: flex; gap: 1.4vmin; margin: 3.2vmin 0 0; padding: 0; list-style: none; flex-wrap: wrap; }
   .steps li {
     display: flex; align-items: center; gap: .55em; padding: .5em 1em .5em .5em; border-radius: 999px;
@@ -131,6 +132,7 @@
         <p class="eyebrow">Station</p>
         <h1 class="name">{{ station | label }}</h1>
         <p class="price"><b>{{ price_sen | rm }}</b> per hour</p>
+        {% if warmup %}<p class="bonus">+{{ warmup }} free while the TV turns on</p>{% endif %}
         <ol class="steps">
           <li><b>1</b>Scan</li>
           <li><b>2</b>Pay</li>
@@ -183,6 +185,7 @@
 (() => {
   const STATION = {{ station | tojson }};
   const LABEL = {{ (station | label) | tojson }};
+  const WARMUP = {{ warmup | tojson }};
   let state = {{ state | tojson }};
 
   const $ = (id) => document.getElementById(id);
@@ -227,7 +230,9 @@
     }
     // Starting from idle only counts as a new payment if it's a real session (avoids clock-edge flicker).
     if (mode === "idle" && s.remaining_seconds > 60) {
-      showOverlay("paid", "Payment received!", `${LABEL} is powering on. Enjoy!`, 4500);
+      showOverlay("paid", "Payment received!", WARMUP
+        ? `${LABEL} is powering on. +${WARMUP} free while the TV starts. Enjoy!`
+        : `${LABEL} is powering on. Enjoy!`, 4500);
     }
     state = s;
     endAt = newEnd;

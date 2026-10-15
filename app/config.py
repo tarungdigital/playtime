@@ -67,6 +67,8 @@ PLAY_OPTIONS = parse_options(os.environ.get("PLAY_OPTIONS") or ",".join(
     + [f"{h * 60}:{h * PRICE_PER_HOUR_SEN}" for h in range(1, MAX_HOURS + 1)]
 ))
 CHECK_INTERVAL_SECONDS = int(os.environ.get("CHECK_INTERVAL_SECONDS", "15"))
+# Free time added when a session starts (not when it's extended), so the TV can turn on.
+WARMUP_SECONDS = int(os.environ.get("WARMUP_SECONDS", "60"))
 # Admin panel password (also accepted as the X-Admin-Token header). Empty disables /admin.
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 # For "today" / "this month" in the admin stats. Malaysia is UTC+8 with no DST.
