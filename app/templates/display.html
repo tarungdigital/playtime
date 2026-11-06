@@ -4,133 +4,178 @@
 {% block head %}
 <meta name="robots" content="noindex">
 <style>
+  /* This screen runs on 7" Android tablets, some with old browsers (Android 4.x). So the page
+     uses no CSS variables, grid, flexbox, clamp()/min() or aspect-ratio, and its script is ES5.
+     Lengths are in rem: 1rem is 100px on a 1024×600 screen (600×1024 in portrait), and the
+     script below scales it so the layout fills whatever screen it's on. */
+  html { font-size: 100px; -webkit-text-size-adjust: 100%; }
   html, body { height: 100%; overflow: hidden; }
-  body { --ring: var(--ok); --ring-glow: rgba(46, 230, 166, .45); }
-  body[data-phase="starting"], body[data-phase="warning"] { --ring: var(--warn); --ring-glow: rgba(255, 178, 36, .45); }
-  body[data-phase="critical"] { --ring: var(--danger); --ring-glow: rgba(255, 77, 94, .55); }
-
-  .screen {
-    position: fixed; inset: 0; display: grid; grid-template-rows: auto 1fr auto;
-    gap: 2vmin; padding: clamp(16px, 3.5vmin, 44px);
+  body {
+    background: #0b0d12;
+    background: radial-gradient(120% 60% at 50% -10%, rgba(255, 61, 82, .18), transparent 60%), #0b0d12;
+    color: #f3f5f9; font-size: .16rem;
+    -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
   }
-  .bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-  .bar .brand { font-size: clamp(16px, 2.8vmin, 30px); gap: 1.4vmin; }
-  .bar .brand-mark { width: clamp(30px, 5vmin, 54px); height: clamp(30px, 5vmin, 54px); border-radius: 1.6vmin; }
-  .bar .brand-mark svg { width: 62.5%; height: 62.5%; }
-  .bar .badge { font-size: clamp(13px, 2.2vmin, 24px); padding: .5em 1.1em; }
+  [hidden] { display: none !important; }
+  p, h1, h2, ol { margin: 0; padding: 0; }
 
-  .stage { position: relative; min-height: 0; }
+  /* Header */
+  .bar { position: absolute; top: .2rem; left: .28rem; right: .28rem; height: .44rem; line-height: .44rem; }
+  .bar .brand { display: block; float: left; font-size: .22rem; font-weight: 700; white-space: nowrap; }
+  .bar .brand-mark {
+    display: inline-block; position: relative; vertical-align: top; width: .44rem; height: .44rem; margin-right: .12rem;
+    border-radius: .13rem; background: #ff3d52; box-shadow: 0 .06rem .2rem rgba(255, 61, 82, .35);
+  }
+  .bar .brand-mark svg { position: absolute; top: 50%; left: 50%; width: .28rem; height: .28rem; margin: -.14rem 0 0 -.14rem; }
+  .bar .badge {
+    float: right; margin-top: .03rem; padding: 0 .2rem; border: 0; border-radius: .2rem;
+    font-size: .18rem; font-weight: 700; line-height: .38rem;
+  }
+  .badge.free { background: rgba(46, 230, 166, .12); color: #2ee6a6; }
+  .badge.busy { background: rgba(255, 61, 82, .14); color: #ff3d52; }
+
+  /* Two scenes stacked in the middle; columns side by side, or stacked in portrait */
+  .stage { position: absolute; top: .76rem; right: .28rem; bottom: .52rem; left: .28rem; }
   .scene {
-    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    gap: clamp(24px, 7vmin, 110px); transition: opacity .6s ease, transform .6s ease;
+    position: absolute; top: 0; left: 0; display: table; width: 100%; height: 100%;
+    -webkit-transition: opacity .6s ease, -webkit-transform .6s ease; transition: opacity .6s ease, transform .6s ease;
   }
-  body:not([data-mode="idle"]) .idle-scene,
-  body:not([data-mode="playing"]) .play-scene { opacity: 0; transform: scale(.97); pointer-events: none; }
+  /* Idle is the default, so the QR code still shows if the script can't run. */
+  body[data-mode="playing"] .idle-scene, body:not([data-mode="playing"]) .play-scene {
+    opacity: 0; -webkit-transform: scale(.97); transform: scale(.97); pointer-events: none;
+  }
+  .scene-in { display: table-cell; vertical-align: middle; text-align: center; font-size: 0; }
+  .col { display: inline-block; vertical-align: middle; text-align: left; font-size: .16rem; }
+  .col + .col { margin-left: .56rem; }
+  .info { max-width: 5.2rem; }
 
-  .eyebrow { margin: 0; font-size: clamp(12px, 2vmin, 22px); font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); }
-  .name { margin: .1em 0 0; font-size: clamp(30px, 7vmin, 92px); line-height: 1.05; letter-spacing: -.02em; }
+  .eyebrow { font-size: .15rem; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: #8d96aa; }
+  .name { margin-top: .04rem; font-size: .6rem; font-weight: 800; line-height: 1.05; letter-spacing: -.02em; word-wrap: break-word; }
 
   /* Idle: big QR */
+  .qr-col { text-align: center; }
   .qr-card {
-    flex: none; padding: clamp(14px, 3vmin, 34px); border-radius: clamp(18px, 4vmin, 44px); background: #fff;
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 30px 80px rgba(0, 0, 0, .5), 0 0 120px rgba(255, 61, 82, .18);
+    display: inline-block; padding: .1rem; border-radius: .24rem; background: #fff;
+    box-shadow: 0 .2rem .6rem rgba(0, 0, 0, .5), 0 0 .9rem rgba(255, 61, 82, .2);
   }
-  .qr-card svg { display: block; width: min(52vmin, 560px); height: auto; }
-  /* QR code with "Scan to play" centred underneath it */
-  .qr-col { flex: none; display: flex; flex-direction: column; align-items: center; gap: 2.6vmin; }
-  .cta { margin: 0; font-size: clamp(28px, 6.5vmin, 84px); font-weight: 800; line-height: 1; letter-spacing: -.03em; text-align: center; }
-  .price { margin: .55em 0 0; font-size: clamp(18px, 3.6vmin, 44px); color: var(--muted); }
-  .price b { color: var(--text); }
-  .steps { display: flex; gap: 1.4vmin; margin: 3.2vmin 0 0; padding: 0; list-style: none; flex-wrap: wrap; }
+  /* Both sizes set: old browsers don't size an inline SVG from its viewBox. */
+  .qr-card svg { display: block; width: 3.3rem; height: 3.3rem; }
+  .cta { margin-top: .14rem; font-size: .44rem; font-weight: 800; line-height: 1.1; letter-spacing: -.03em; }
+  .price { margin-top: .1rem; font-size: .3rem; color: #8d96aa; }
+  .price b { color: #f3f5f9; }
+  .steps { margin-top: .26rem; list-style: none; font-size: 0; }
   .steps li {
-    display: flex; align-items: center; gap: .55em; padding: .5em 1em .5em .5em; border-radius: 999px;
-    background: var(--surface); border: 1px solid var(--line); font-size: clamp(14px, 2.3vmin, 26px); font-weight: 600;
+    display: inline-block; margin: 0 .1rem 0 0; padding: .07rem .2rem .07rem .07rem; border: 1px solid #262e3e;
+    border-radius: .3rem; background: #151a23; font-size: .2rem; font-weight: 600; line-height: .34rem;
   }
   .steps b {
-    display: grid; place-items: center; width: 1.7em; height: 1.7em; border-radius: 50%;
-    background: var(--accent); color: #fff; font-size: .85em;
+    display: inline-block; vertical-align: top; width: .34rem; height: .34rem; margin-right: .1rem; border-radius: 50%;
+    background: #ff3d52; color: #fff; font-size: .17rem; text-align: center;
   }
-  .methods { margin: 2.4vmin 0 0; font-size: clamp(12px, 1.9vmin, 22px); color: var(--muted); }
+  .methods { margin-top: .2rem; font-size: .16rem; color: #8d96aa; }
 
   /* Playing: big countdown */
-  .ring-wrap { position: relative; flex: none; width: min(66vmin, 720px); aspect-ratio: 1; }
-  /* overflow: visible lets the glow spread past the SVG box instead of being cut off square. */
-  .ring { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
-  .ring circle { fill: none; stroke-width: 8; }
-  .ring .track { stroke: var(--surface-2); }
-  .ring .progress {
-    stroke: var(--ring); stroke-linecap: round; transition: stroke-dashoffset 1s linear, stroke .4s ease;
-    filter: drop-shadow(0 0 1.2vmin var(--ring-glow));
+  .ring-wrap { position: relative; width: 4.4rem; height: 4.4rem; }
+  .ring { display: block; width: 100%; height: 100%; }
+  .ring circle { fill: none; stroke-width: 8; stroke-linecap: round; }
+  .ring .track { stroke: #1c2230; }
+  .ring .glow { stroke-width: 16; stroke-opacity: .12; }  /* a soft halo; CSS filters don't work on old browsers */
+  .ring .glow, .ring .progress {
+    stroke: #2ee6a6;
+    -webkit-transition: stroke-dashoffset 1s linear, stroke .4s ease; transition: stroke-dashoffset 1s linear, stroke .4s ease;
   }
-  .readout { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
-  .time {
-    font-size: clamp(48px, 14vmin, 168px); font-weight: 750; line-height: 1; letter-spacing: -.03em;
-    font-variant-numeric: tabular-nums;
-  }
+  body[data-phase="starting"] .ring .glow, body[data-phase="starting"] .ring .progress,
+  body[data-phase="warning"] .ring .glow, body[data-phase="warning"] .ring .progress { stroke: #ffb224; }
+  body[data-phase="critical"] .ring .glow, body[data-phase="critical"] .ring .progress { stroke: #ff4d5e; }
+  .readout { position: absolute; top: 0; left: 0; display: table; width: 100%; height: 100%; }
+  .readout-in { display: table-cell; vertical-align: middle; text-align: center; }
+  .time { font-size: .88rem; font-weight: 700; line-height: 1; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+  .sub { margin-top: .1rem; font-size: .24rem; color: #8d96aa; }
+  .sub b { color: #f3f5f9; }
   /* Warm-up: the free first minute while the TV turns on */
-  body[data-phase="starting"] .time { font-size: clamp(28px, 7vmin, 84px); color: var(--warn); }
+  body[data-phase="starting"] .time { font-size: .46rem; color: #ffb224; }
   body[data-phase="starting"] .sub { display: none; }
-  body[data-phase="critical"] .time { color: var(--danger); }
-  body[data-phase="critical"] .ring-wrap { animation: pulse 1s ease-in-out infinite; }
-  @keyframes pulse { 50% { transform: scale(1.02); } }
-  .sub { margin-top: 1.4vmin; font-size: clamp(14px, 2.8vmin, 32px); color: var(--muted); }
-  .sub b { color: var(--text); }
-  .ends { margin: .6em 0 0; font-size: clamp(16px, 3.4vmin, 40px); color: var(--muted); }
-  .ends b { color: var(--text); }
-  .add { display: flex; align-items: center; gap: 2.4vmin; margin-top: 4vmin; }
-  .add .qr-card { padding: 1.4vmin; border-radius: 2vmin; box-shadow: none; }
-  .add .qr-card svg { width: min(20vmin, 220px); }
-  .add strong { display: block; font-size: clamp(16px, 3vmin, 34px); }
-  .add span { font-size: clamp(13px, 2.2vmin, 26px); color: var(--muted); }
+  body[data-phase="critical"] .time { color: #ff4d5e; }
+  body[data-phase="critical"] .ring-wrap { -webkit-animation: pulse 1s ease-in-out infinite; animation: pulse 1s ease-in-out infinite; }
+  @-webkit-keyframes pulse { 0%, 100% { -webkit-transform: scale(1); } 50% { -webkit-transform: scale(1.02); } }
+  @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
+  .ends { margin-top: .12rem; font-size: .28rem; color: #8d96aa; }
+  .ends b { color: #f3f5f9; }
+  .add { margin-top: .32rem; font-size: 0; }
+  .add .qr-card { vertical-align: middle; padding: .06rem; border-radius: .14rem; box-shadow: none; }
+  .add .qr-card svg { width: 1.5rem; height: 1.5rem; }
+  .add-text { display: inline-block; vertical-align: middle; margin-left: .2rem; text-align: left; font-size: .18rem; color: #8d96aa; }
+  .add-text strong { display: block; font-size: .26rem; color: #f3f5f9; }
 
   /* Footer notices */
-  .foot { display: flex; justify-content: center; min-height: 1px; }
-  .alert {
-    display: flex; align-items: center; gap: .6em; padding: .7em 1.2em; border-radius: 999px;
-    background: var(--warn-soft); color: var(--warn); font-size: clamp(13px, 2.2vmin, 24px); font-weight: 600;
-  }
-  .alert[hidden], .pill[hidden] { display: none; }
-  .pill { padding: .5em 1em; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: clamp(12px, 1.8vmin, 20px); }
+  .foot { position: absolute; left: .28rem; right: .28rem; bottom: .12rem; text-align: center; font-size: 0; }
+  .alert, .pill { display: inline-block; margin: 0 .05rem; padding: .06rem .2rem; border-radius: .2rem; font-size: .18rem; line-height: .28rem; }
+  .alert { background: rgba(255, 178, 36, .13); color: #ffb224; font-weight: 600; }
+  .pill { background: #1c2230; color: #8d96aa; }
 
   /* Full-screen moments: paid / time added / time's up */
   .overlay {
-    position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; text-align: center;
-    background: rgba(11, 13, 18, .94); transition: opacity .4s ease;
+    position: absolute; top: 0; left: 0; z-index: 10; display: table; width: 100%; height: 100%;
+    background: rgba(11, 13, 18, .95); text-align: center;
+    -webkit-transition: opacity .4s ease; transition: opacity .4s ease;
   }
   .overlay.hide { opacity: 0; pointer-events: none; }
-  .overlay-icon { width: clamp(80px, 18vmin, 200px); height: clamp(80px, 18vmin, 200px); margin: 0 auto; }
-  .overlay h2 { margin: 3vmin 0 0; font-size: clamp(34px, 9vmin, 120px); line-height: 1; letter-spacing: -.03em; }
-  .overlay p { margin: 2vmin 0 0; font-size: clamp(16px, 3.4vmin, 40px); color: var(--muted); }
-  .overlay.show .overlay-icon { animation: pop .5s cubic-bezier(.2, 1.4, .4, 1); }
-  @keyframes pop { from { transform: scale(.4); opacity: 0; } }
+  .overlay-in { display: table-cell; vertical-align: middle; padding: 0 .4rem; }
+  .overlay-icon { display: none; width: 1.5rem; height: 1.5rem; margin: 0 auto; }
+  .overlay.paid .icon-paid, .overlay.added .icon-added, .overlay.done .icon-done { display: block; }
+  .overlay.show .overlay-icon {
+    -webkit-animation: pop .5s cubic-bezier(.2, 1.4, .4, 1); animation: pop .5s cubic-bezier(.2, 1.4, .4, 1);
+  }
+  @-webkit-keyframes pop { from { -webkit-transform: scale(.4); opacity: 0; } to { -webkit-transform: scale(1); opacity: 1; } }
+  @keyframes pop { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .overlay h2 { margin-top: .28rem; font-size: .72rem; line-height: 1.05; letter-spacing: -.03em; }
+  .overlay p { margin-top: .16rem; font-size: .28rem; color: #8d96aa; }
 
   @media (orientation: portrait) {
-    .scene { flex-direction: column; text-align: center; gap: 4vmin; }
-    .steps, .add { justify-content: center; }
-    .qr-card svg { width: min(56vmin, 560px); }
-    .ring-wrap { width: min(80vmin, 720px); }
+    .col { display: block; margin: 0 auto; text-align: center; }
+    .col + .col { margin: .36rem auto 0; }
+    .info { max-width: none; }
+    .qr-card svg { width: 4.4rem; height: 4.4rem; }
+    .steps li { margin: 0 .05rem; }
+    .ring-wrap { width: 4.6rem; height: 4.6rem; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .scene, .overlay { transition: none; }
-    body[data-phase="critical"] .ring-wrap, .overlay.show .overlay-icon { animation: none; }
+    .scene, .overlay { -webkit-transition: none; transition: none; }
+    body[data-phase="critical"] .ring-wrap, .overlay.show .overlay-icon { -webkit-animation: none; animation: none; }
   }
 </style>
+<script>
+  // Scale the layout to the screen: 1rem = 100px on 1024×600 (landscape) or 600×1024 (portrait).
+  (function () {
+    var root = document.documentElement;
+    function fit() {
+      var w = window.innerWidth || root.clientWidth, h = window.innerHeight || root.clientHeight;
+      if (!w || !h) return;
+      var scale = w > h ? Math.min(w / 1024, h / 600) : Math.min(w / 600, h / 1024);
+      root.style.fontSize = (100 * scale).toFixed(2) + "px";
+    }
+    fit();
+    window.addEventListener("resize", fit);
+    // Old Android reports the new size a moment after rotating.
+    window.addEventListener("orientationchange", function () { setTimeout(fit, 300); });
+  })();
+</script>
 {% endblock %}
 
 {% block body %}
 <div class="screen">
   <header class="bar">
     {% include "_brand.html" %}
-    <span class="badge" id="badge">…</span>
+    <span class="badge {{ 'busy' if state.active else 'free' }}" id="badge">{{ "In use" if state.active else "Available" }}</span>
   </header>
 
   <main class="stage">
-    <section class="scene idle-scene">
-      <div class="qr-col">
+    <section class="scene idle-scene"><div class="scene-in">
+      <div class="col qr-col">
         <div class="qr-card" role="img" aria-label="QR code to pay for {{ station | label }}">{{ qr_svg | safe }}</div>
         <p class="cta">Scan to play</p>
       </div>
-      <div>
+      <div class="col info">
         <p class="eyebrow">Station</p>
         <h1 class="name">{{ station | label }}</h1>
         <p class="price"><b>{{ price_sen | rm }}</b> per hour</p>
@@ -141,29 +186,32 @@
         </ol>
         <p class="methods">{{ payment_methods() | join(" · ") }}</p>
       </div>
-    </section>
+    </div></section>
 
-    <section class="scene play-scene">
-      <div class="ring-wrap">
+    <section class="scene play-scene"><div class="scene-in">
+      <div class="col ring-wrap">
         <svg class="ring" viewBox="0 0 200 200" aria-hidden="true">
-          <circle class="track" cx="100" cy="100" r="88"/>
-          <circle class="progress" id="progress" cx="100" cy="100" r="88"/>
+          <g transform="rotate(-90 100 100)">
+            <circle class="track" cx="100" cy="100" r="88"/>
+            <circle class="glow" id="glow" cx="100" cy="100" r="88"/>
+            <circle class="progress" id="progress" cx="100" cy="100" r="88"/>
+          </g>
         </svg>
-        <div class="readout">
+        <div class="readout"><div class="readout-in">
           <div class="time" id="time">00:00</div>
           <div class="sub" id="sub">left</div>
-        </div>
+        </div></div>
       </div>
-      <div>
+      <div class="col info">
         <p class="eyebrow">Now playing</p>
         <h1 class="name">{{ station | label }}</h1>
         <p class="ends" id="ends"></p>
         <div class="add">
           <div class="qr-card" role="img" aria-label="QR code to add time">{{ qr_svg | safe }}</div>
-          <div><strong>Scan to add time</strong><span>{{ price_sen | rm }} per hour</span></div>
+          <div class="add-text"><strong>Scan to add time</strong>{{ price_sen | rm }} per hour</div>
         </div>
       </div>
-    </section>
+    </div></section>
   </main>
 
   <footer class="foot">
@@ -172,131 +220,156 @@
   </footer>
 </div>
 
-<div class="overlay hide" id="overlay" aria-live="assertive">
-  <div>
-    <svg class="overlay-icon" id="overlay-icon" viewBox="0 0 100 100" aria-hidden="true"></svg>
-    <h2 id="overlay-title"></h2>
-    <p id="overlay-sub"></p>
-  </div>
-</div>
+<div class="overlay hide" id="overlay" aria-live="assertive"><div class="overlay-in">
+  <svg class="overlay-icon icon-paid" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="46" fill="#2ee6a6" fill-opacity=".15"/><path d="M30 51l13 13 27-28" fill="none" stroke="#2ee6a6" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <svg class="overlay-icon icon-added" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="46" fill="#2ee6a6" fill-opacity=".15"/><path d="M50 30v40M30 50h40" fill="none" stroke="#2ee6a6" stroke-width="7" stroke-linecap="round"/></svg>
+  <svg class="overlay-icon icon-done" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="46" fill="#ff3d52" fill-opacity=".15"/><circle cx="50" cy="52" r="24" fill="none" stroke="#ff3d52" stroke-width="6"/><path d="M50 40v13l8 6M44 22h12" fill="none" stroke="#ff3d52" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <h2 id="overlay-title"></h2>
+  <p id="overlay-sub"></p>
+</div></div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-(() => {
-  const STATION = {{ station | tojson }};
-  const LABEL = {{ (station | label) | tojson }};
-  const WARMUP = {{ warmup_seconds | tojson }};  // free seconds at the start of a session
-  let state = {{ state | tojson }};
+// ES5 only (no arrow functions, template strings, let/const, fetch or async): old Android browsers.
+(function () {
+  var STATION = {{ station | tojson }};
+  var LABEL = {{ (station | label) | tojson }};
+  var WARMUP = {{ warmup_seconds | tojson }};  // free seconds at the start of a session
 
-  const $ = (id) => document.getElementById(id);
-  const CIRC = 2 * Math.PI * 88;
-  $("progress").style.strokeDasharray = CIRC;
+  function $(id) { return document.getElementById(id); }
+  function show(id, on) { if (on) $(id).removeAttribute("hidden"); else $(id).setAttribute("hidden", ""); }
 
-  const pad = (n) => String(n).padStart(2, "0");
-  const fmt = (s) => {
-    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
-    return h ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
-  };
-  const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  var CIRC = 2 * Math.PI * 88;
+  var arcs = [$("progress"), $("glow")];
+  function fillRing(fraction) {
+    for (var i = 0; i < arcs.length; i++) arcs[i].style.strokeDashoffset = (CIRC * (1 - fraction)).toFixed(2) + "px";
+  }
+  for (var i = 0; i < arcs.length; i++) arcs[i].style.strokeDasharray = CIRC.toFixed(2) + "px";
 
-  const ICONS = {
-    paid: '<circle cx="50" cy="50" r="46" fill="rgba(46,230,166,.15)"/><path d="M30 51l13 13 27-28" fill="none" stroke="#2ee6a6" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>',
-    added: '<circle cx="50" cy="50" r="46" fill="rgba(46,230,166,.15)"/><path d="M50 30v40M30 50h40" fill="none" stroke="#2ee6a6" stroke-width="7" stroke-linecap="round"/>',
-    done: '<circle cx="50" cy="50" r="46" fill="rgba(255,61,82,.15)"/><circle cx="50" cy="52" r="24" fill="none" stroke="#ff3d52" stroke-width="6"/><path d="M50 40v13l8 6M44 22h12" fill="none" stroke="#ff3d52" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>',
-  };
-  let overlayKind = null, overlayTimer;
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function fmt(s) {
+    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+    return h ? h + ":" + pad(m) + ":" + pad(sec) : pad(m) + ":" + pad(sec);
+  }
+  // Built by hand: old browsers ignore toLocaleTimeString's options.
+  function clock(ms) {
+    var d = new Date(ms), h = d.getHours();
+    return (h % 12 || 12) + ":" + pad(d.getMinutes()) + (h < 12 ? " am" : " pm");
+  }
+
+  var overlay = $("overlay"), overlayKind = null, overlayTimer;
   function showOverlay(kind, title, sub, ms) {
     if (overlayKind === kind) return;  // already showing this moment
     overlayKind = kind;
-    $("overlay-icon").innerHTML = ICONS[kind];  // static markup above, no user data
     $("overlay-title").textContent = title;
     $("overlay-sub").textContent = sub;
-    const o = $("overlay");
-    o.classList.remove("hide", "show");
-    void o.offsetWidth;  // restart the pop animation
-    o.classList.add("show");
+    overlay.className = "overlay " + kind;
+    void overlay.offsetWidth;  // restart the pop animation
+    overlay.className = "overlay show " + kind;
     clearTimeout(overlayTimer);
-    overlayTimer = setTimeout(() => { o.classList.add("hide"); overlayKind = null; }, ms);
+    overlayTimer = setTimeout(function () { overlay.className = "overlay hide " + kind; overlayKind = null; }, ms);
   }
 
-  let endAt = 0, total = 0, mode = null;
+  var endAt = 0, total = 0, mode = null;
 
   function apply(s) {
-    const newEnd = Date.now() + s.remaining_seconds * 1000;
-    const wasPlaying = mode === "playing";
+    var newEnd = Date.now() + s.remaining_seconds * 1000;
     // Someone paid while time was running: celebrate the extension.
-    if (wasPlaying && s.active && newEnd - endAt > 60000) {
-      showOverlay("added", "Time added!", `Now ends at ${clock(newEnd)}`, 4500);
+    if (mode === "playing" && s.active && newEnd - endAt > 60000) {
+      showOverlay("added", "Time added!", "Now ends at " + clock(newEnd), 4500);
     }
     // Starting from idle only counts as a new payment if it's a real session (avoids clock-edge flicker).
     if (mode === "idle" && s.remaining_seconds > 60) {
-      showOverlay("paid", "Payment received!", `${LABEL} is powering on. Enjoy!`, 4500);
+      showOverlay("paid", "Payment received!", LABEL + " is powering on. Enjoy!", 4500);
     }
-    state = s;
     endAt = newEnd;
     total = s.total_seconds;
-    $("alert-offline").hidden = s.plug_online !== false;
+    show("alert-offline", s.plug_online === false);
     tick();
   }
 
   function tick() {
-    const left = Math.max(0, Math.round((endAt - Date.now()) / 1000));
-    const playing = left > 0;
+    var left = Math.max(0, Math.round((endAt - Date.now()) / 1000));
+    var playing = left > 0;
     if (mode === "playing" && !playing) {
       showOverlay("done", "Time's up!", "Thanks for playing. Scan the code to play again.", 8000);
     }
     mode = playing ? "playing" : "idle";
     // A new session starts with WARMUP free seconds while the TV turns on (extensions don't).
-    const elapsed = total - left;
-    const starting = playing && elapsed < WARMUP;
-    document.body.dataset.mode = mode;
-    document.body.dataset.phase = !playing ? "" : starting ? "starting"
-      : left <= 60 ? "critical" : left <= 300 ? "warning" : "normal";
+    var elapsed = total - left;
+    var starting = playing && elapsed < WARMUP;
+    document.body.setAttribute("data-mode", mode);
+    document.body.setAttribute("data-phase", !playing ? "" : starting ? "starting"
+      : left <= 60 ? "critical" : left <= 300 ? "warning" : "normal");
 
-    const badge = $("badge");
+    var badge = $("badge");
     badge.textContent = playing ? "In use" : "Available";
     badge.className = "badge " + (playing ? "busy" : "free");
 
     if (playing) {
-      $("ends").innerHTML = `Ends at <b>${clock(endAt)}</b>`;
+      $("ends").innerHTML = "Ends at <b>" + clock(endAt) + "</b>";
       if (starting) {
         // The ring fills up during warm-up, then drains through the paid time.
         $("time").textContent = "Starting up";
-        $("progress").style.strokeDashoffset = CIRC * (1 - elapsed / WARMUP);
+        fillRing(elapsed / WARMUP);
       } else {
         $("time").textContent = fmt(left);
         $("sub").innerHTML = left <= 300 ? "<b>Almost up!</b>" : "left";
-        $("progress").style.strokeDashoffset = CIRC * (1 - left / Math.max(total - WARMUP, left, 1));
+        fillRing(left / Math.max(total - WARMUP, left, 1));
       }
     }
   }
 
-  const loadedAt = Date.now();
-  let failures = 0;
-  async function poll() {
-    try {
-      const r = await fetch(`/api/stations/${encodeURIComponent(STATION)}`, { cache: "no-store" });
-      if (!r.ok) throw new Error(r.status);
-      failures = 0;
-      apply(await r.json());
-    } catch (_) {
-      failures++;
+  var loadedAt = Date.now();
+  var failures = 0, polling = false;
+  function poll() {
+    if (polling) return;  // the last request hasn't finished yet
+    polling = true;
+    var xhr = new XMLHttpRequest(), finished = false;
+    var timer = setTimeout(function () { xhr.abort(); done(null); }, 10000);
+    function done(s) {
+      if (finished) return;
+      finished = true;
+      polling = false;
+      clearTimeout(timer);
+      if (s) { failures = 0; apply(s); } else failures++;
+      show("reconnecting", failures >= 3);
+      // Long-running screen: reload now and then (only while idle) to pick up updates.
+      if (mode === "idle" && Date.now() - loadedAt > 6 * 3600 * 1000) location.reload();
     }
-    $("reconnecting").hidden = failures < 3;
-    // Long-running screen: reload now and then (only while idle) to pick up updates.
-    if (mode === "idle" && Date.now() - loadedAt > 6 * 3600 * 1000) location.reload();
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) return;
+      var s = null;
+      try { if (xhr.status === 200) s = JSON.parse(xhr.responseText); } catch (e) {}
+      done(s);
+    };
+    // The timestamp stops old browsers serving a cached answer.
+    xhr.open("GET", "/api/stations/" + encodeURIComponent(STATION) + "?t=" + Date.now(), true);
+    xhr.send();
   }
 
-  // Keep the screen awake and go full screen on the first tap.
-  async function keepAwake() {
-    try { await navigator.wakeLock?.request("screen"); } catch (_) {}
+  // Keep the screen awake and go full screen on the first tap, where the browser allows it.
+  function keepAwake() {
+    try { navigator.wakeLock.request("screen").then(null, function () {}); } catch (e) {}
   }
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) { keepAwake(); poll(); } });
-  document.addEventListener("click", () => document.documentElement.requestFullscreen?.().catch(() => {}), { once: true });
+  function fullscreen() {
+    document.removeEventListener("click", fullscreen);
+    var el = document.documentElement;
+    var request = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen;
+    try {
+      var p = request && request.call(el);
+      if (p && p.then) p.then(null, function () {});
+    } catch (e) {}
+  }
+  var hiddenKey = "hidden" in document ? "hidden" : "webkitHidden";
+  document.addEventListener(hiddenKey === "hidden" ? "visibilitychange" : "webkitvisibilitychange", function () {
+    if (!document[hiddenKey]) { keepAwake(); poll(); }
+  });
+  document.addEventListener("click", fullscreen);
   keepAwake();
 
-  apply(state);
+  apply({{ state | tojson }});
   setInterval(tick, 1000);
   setInterval(poll, 3000);
 })();
