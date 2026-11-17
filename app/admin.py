@@ -13,9 +13,10 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from . import chip, config, db, plug
-from .core import (EWALLETS, add_station, checkout_methods, clean_code, credit_if_paid, duration, label,
-                   method_names, offered_methods, options, plug_on, promo_label, remove_station, rm, sandbox,
-                   set_options, set_sandbox, spawn, state, stations, sync_plug, templates, update_station)
+from .core import (EWALLETS, METHOD_NAMES, add_station, checkout_methods, clean_code, credit_if_paid, duration,
+                   label, method_names, offered_methods, options, plug_on, promo_label, remove_station, rm,
+                   sandbox, set_options, set_sandbox, spawn, state, stations, sync_plug, templates,
+                   update_station)
 
 router = APIRouter(prefix="/admin")
 
@@ -117,6 +118,8 @@ def summary_data() -> dict:
     username, password = plug.credentials()
     test = sandbox()
     methods = checkout_methods(test)
+    offered = offered_methods.get(test)
+    allowed = config.CHIP_PAYMENT_METHODS
 
     activity = [
         {"at": p["paid_at"], "kind": "payment", "station": p["station"], "minutes": p["minutes"],
@@ -146,11 +149,15 @@ def summary_data() -> dict:
         "payments": {
             "sandbox": test, "production_key": bool(config.CHIP_SECRET_KEY),
             "sandbox_key": bool(config.CHIP_SANDBOX_SECRET_KEY),
-            # What customers can pay with (None until CHIP has been asked), and whether that
-            # includes e-wallets: "on", "excluded" by CHIP_PAYMENT_METHOD, or "off" at CHIP.
+            # What customers can pay with, and whether that includes an e-wallet (None until
+            # CHIP has been asked).
             "methods": None if methods is None else method_names(methods),
-            "ewallets": None if methods is None else "on" if EWALLETS & set(methods)
-            else "excluded" if EWALLETS & set(offered_methods[test]) else "off",
+            "ewallets": None if methods is None else bool(EWALLETS & set(methods)),
+            # CHIP_PAYMENT_METHOD codes CHIP isn't offering this account, and codes CHIP offers
+            # that CHIP_PAYMENT_METHOD leaves out. By code: names alone can be ambiguous
+            # (razer_shopeepay and shopee_pay are both "ShopeePay").
+            "missing": [] if offered is None else _coded(m for m in allowed if m not in offered),
+            "left_out": [] if offered is None or not allowed else _coded(m for m in offered if m not in allowed),
         },
         "promos": [
             {"code": p["code"], "label": promo_label(p), "max_uses": p["max_uses"],
@@ -170,6 +177,10 @@ def summary_data() -> dict:
         "activity": activity[:25],
         "pending": pending,
     }
+
+
+def _coded(codes) -> list[dict]:
+    return [{"code": code, "name": METHOD_NAMES.get(code, code)} for code in codes]
 
 
 @router.get("/api/summary", dependencies=[Depends(require_admin)])

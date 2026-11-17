@@ -514,11 +514,11 @@ def test_sandbox_mode_switch(client, chip_purchases, chip_accepts_keys):
     payments = client.get("/admin/api/summary", headers=ADMIN).json()["payments"]
     assert payments == {"sandbox": False, "production_key": True, "sandbox_key": True,
                         "methods": ["DuitNow QR", "FPX", "Touch 'n Go", "GrabPay", "Visa", "Mastercard"],
-                        "ewallets": "on"}
+                        "ewallets": True, "missing": [], "left_out": []}
     assert set_mode(client, True).json() == {"sandbox": True}
     assert chip_accepts_keys == [True]  # the key was tried before switching
     payments = client.get("/admin/api/summary", headers=ADMIN).json()["payments"]
-    assert payments["methods"] == ["DuitNow QR"] and payments["ewallets"] == "off"  # what sandbox offers
+    assert payments["methods"] == ["DuitNow QR"] and payments["ewallets"] is False  # what sandbox offers
     assert "Test mode" in client.get("/s/switch1").text and "Test mode" in client.get("/d/switch1").text
 
     test_pid = buy(client, chip_purchases)
@@ -591,15 +591,22 @@ def test_full_discount_starts_play_without_checkout(client, chip_purchases):
     assert check_code(client, "RM50").json()["prices"]["180"] == 0
 
 
-def test_ewallet_status_in_admin(client, chip_purchases, monkeypatch):
-    def ewallets():
+def test_payment_methods_explained_in_admin(client, chip_purchases, monkeypatch):
+    def payments():
         return client.get("/admin/api/summary", headers=ADMIN).json()["payments"]
 
-    core.offered_methods[False] = OFFERED
-    monkeypatch.setattr(config, "CHIP_PAYMENT_METHODS", ["duitnow_qr", "fpx"])
-    assert ewallets()["methods"] == ["DuitNow QR", "FPX"] and ewallets()["ewallets"] == "excluded"
-    monkeypatch.setattr(config, "CHIP_PAYMENT_METHODS", [])
-    core.offered_methods[False] = ["duitnow_qr", "visa"]
-    assert ewallets()["ewallets"] == "off"
-    core.offered_methods.clear()
-    assert ewallets()["methods"] is None and ewallets()["ewallets"] is None
+    # Razer e-wallets listed in .env, but this CHIP account only offers ShopeePay's own code.
+    monkeypatch.setattr(config, "CHIP_PAYMENT_METHODS",
+                        ["duitnow_qr", "fpx", "razer_tng", "razer_grabpay", "razer_shopeepay"])
+    core.offered_methods[False] = ["fpx", "duitnow_qr", "shopee_pay", "visa"]
+    p = payments()
+    assert p["methods"] == ["FPX", "DuitNow QR"] and p["ewallets"] is False
+    assert p["missing"] == [{"code": "razer_tng", "name": "Touch 'n Go"},
+                            {"code": "razer_grabpay", "name": "GrabPay"},
+                            {"code": "razer_shopeepay", "name": "ShopeePay"}]
+    assert p["left_out"] == [{"code": "shopee_pay", "name": "ShopeePay"}, {"code": "visa", "name": "Visa"}]
+    monkeypatch.setattr(config, "CHIP_PAYMENT_METHODS", [])  # no list: everything CHIP offers
+    p = payments()
+    assert p["ewallets"] is True and p["missing"] == [] and p["left_out"] == []
+    core.offered_methods.clear()  # CHIP not asked yet
+    assert payments()["methods"] is None and payments()["ewallets"] is None

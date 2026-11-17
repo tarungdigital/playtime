@@ -82,7 +82,7 @@
   .badge.test, .kind.test { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
   .code { font-weight: 700; letter-spacing: .5px; }
   .methods-line { margin: 12px 0 0; font-size: 14px; line-height: 1.45; }
-  .methods-line + .hint { margin: 6px 0 0; }
+  .methods-line ~ .hint { margin: 6px 0 0; }
   .code-input { text-transform: uppercase; letter-spacing: .5px; }
   .code-input::placeholder { text-transform: none; letter-spacing: 0; }
   .head-actions { display: flex; align-items: center; gap: 12px; }
@@ -498,8 +498,10 @@
     const to = !p.sandbox;  // what the button switches to
     const hasKey = to ? p.sandbox_key : p.production_key;
     const key = (set) => (set ? "Set in .env" : notSet());
+    const coded = (methods) => methods.map((m) => `${m.name} (${m.code})`).join(", ");
+    const where = p.sandbox ? " in sandbox" : " on this account";
     $("mode-badge").hidden = !p.sandbox;
-    $("payments-card").replaceChildren(
+    $("payments-card").replaceChildren(...[  // filter: replaceChildren would print a null as "null"
       settingsHead("Payments", null,
         h("span", { class: "badge " + (p.sandbox ? "test" : "free") }, p.sandbox ? "Sandbox" : "Production")),
       p.sandbox
@@ -512,18 +514,19 @@
       h("p", { class: "methods-line" }, h("span", { class: "muted" }, "At checkout: "),
         p.methods === null ? h("span", { class: "muted" }, "not checked with CHIP yet")
           : p.methods.length ? p.methods.join(", ") : h("span", { class: "delta-down" }, "no payment methods")),
-      p.ewallets === "excluded"
-        ? h("p", { class: "hint warn" }, "E-wallets are left out by CHIP_PAYMENT_METHOD in .env. Add razer_tng, " +
-            "razer_grabpay and razer_shopeepay to it (or remove the line to offer everything) and restart.")
-        : p.ewallets === "off"
-        ? h("p", { class: "hint warn" }, `CHIP doesn't offer e-wallets on this account${p.sandbox ? " in sandbox" : ""}. ` +
-            "Activate Touch 'n Go, GrabPay and ShopeePay in the CHIP dashboard, or ask CHIP support.")
-        : null,
+      p.missing.length ? h("p", { class: "hint warn" },
+        `In CHIP_PAYMENT_METHOD but not offered by CHIP${where}, so customers don't see them: ${coded(p.missing)}. ` +
+        "Ask CHIP to activate them, or check the codes.") : null,
+      p.left_out.length ? h("p", { class: "hint" },
+        `CHIP also offers ${coded(p.left_out)}. To offer one, add its code to CHIP_PAYMENT_METHOD in .env and restart.`) : null,
+      p.ewallets === false && !p.missing.length && !p.left_out.length ? h("p", { class: "hint warn" },
+        `CHIP doesn't offer e-wallets${where}. Ask CHIP to activate Touch 'n Go, GrabPay and ShopeePay.`) : null,
       h("div", { class: "card-actions" },
         h("button", { class: "btn-s" + (to ? "" : " primary"), type: "button", disabled: !hasKey,
           onclick: (e) => switchMode(to, e.currentTarget) }, `Switch to ${to ? "sandbox" : "production"}`),
         hasKey ? null : h("span", { class: "hint" },
-          `Add ${to ? "CHIP_SANDBOX_SECRET_KEY" : "CHIP_SECRET_KEY"} to .env and restart to switch.`)));
+          `Add ${to ? "CHIP_SANDBOX_SECRET_KEY" : "CHIP_SECRET_KEY"} to .env and restart to switch.`)),
+    ].filter(Boolean));
   }
 
   async function switchMode(sandbox, btn) {
