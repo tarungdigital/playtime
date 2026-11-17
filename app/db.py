@@ -16,7 +16,10 @@ CREATE TABLE IF NOT EXISTS purchases (
     status      TEXT NOT NULL,      -- 'created' | 'paid'
     created_at  REAL NOT NULL,
     paid_at     REAL,
-    minutes     INTEGER
+    minutes     INTEGER,
+    promo_code  TEXT,               -- promo code used, if any
+    discount_sen INTEGER NOT NULL DEFAULT 0,
+    sandbox     INTEGER NOT NULL DEFAULT 0  -- 1 = CHIP test-mode checkout (no real money)
 );
 CREATE TABLE IF NOT EXISTS stations (
     station     TEXT PRIMARY KEY,
@@ -43,6 +46,14 @@ CREATE TABLE IF NOT EXISTS settings (
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL
 );
+-- Uses are counted from `purchases`, so a code removed and created again starts at zero.
+CREATE TABLE IF NOT EXISTS promo_codes (
+    code        TEXT PRIMARY KEY,   -- upper case letters and digits
+    percent_off INTEGER NOT NULL DEFAULT 0,  -- exactly one of percent_off / sen_off is set
+    sen_off     INTEGER NOT NULL DEFAULT 0,
+    max_uses    INTEGER,            -- NULL = no limit
+    created_at  REAL NOT NULL
+);
 """
 
 
@@ -63,6 +74,10 @@ def init():
         if "minutes" not in _columns(c, "purchases"):
             c.execute("ALTER TABLE purchases ADD COLUMN minutes INTEGER")
         c.execute("UPDATE purchases SET minutes = hours * 60 WHERE minutes IS NULL")
+        for column, kind in (("promo_code", "TEXT"), ("discount_sen", "INTEGER NOT NULL DEFAULT 0"),
+                             ("sandbox", "INTEGER NOT NULL DEFAULT 0")):
+            if column not in _columns(c, "purchases"):
+                c.execute(f"ALTER TABLE purchases ADD COLUMN {column} {kind}")
         if "detail" not in _columns(c, "staff_actions"):
             c.execute("ALTER TABLE staff_actions ADD COLUMN detail TEXT")
 
@@ -135,15 +150,57 @@ def set_setting(key: str, value: str):
                   " ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
 
 
+# --- Promo codes ------------------------------------------------------------------
+# A use is a paid checkout with the code, made since the code was created. Sandbox and
+# production are counted apart, so test payments don't use up a real code.
+
+def promo_codes():
+    """All promo codes, newest first, with their production `uses` and sandbox `test_uses`."""
+    with _conn() as c:
+        return c.execute(
+            "SELECT p.*, COALESCE(SUM(u.sandbox = 0), 0) AS uses, COALESCE(SUM(u.sandbox = 1), 0) AS test_uses"
+            " FROM promo_codes p LEFT JOIN purchases u ON u.promo_code = p.code"
+            "  AND u.created_at >= p.created_at AND u.status = 'paid'"
+            " GROUP BY p.code ORDER BY p.created_at DESC"
+        ).fetchall()
+
+
+def get_promo(code: str, sandbox: bool, station: str, hold_seconds: float):
+    """The promo code with, in this mode, its `uses` and `held`: checkouts with it still open
+    at other stations, whose customers may be paying right now. None if there's no such code."""
+    with _conn() as c:
+        return c.execute(
+            "SELECT p.*, COALESCE(SUM(u.status = 'paid'), 0) AS uses,"
+            " COALESCE(SUM(u.status = 'created' AND u.created_at > ? AND u.station != ?), 0) AS held"
+            " FROM promo_codes p LEFT JOIN purchases u ON u.promo_code = p.code"
+            "  AND u.created_at >= p.created_at AND u.sandbox = ?"
+            " WHERE p.code = ? GROUP BY p.code",
+            (time.time() - hold_seconds, station, int(sandbox), code),
+        ).fetchone()
+
+
+def add_promo(code: str, percent_off: int, sen_off: int, max_uses: int | None):
+    with _conn() as c:
+        c.execute("INSERT INTO promo_codes (code, percent_off, sen_off, max_uses, created_at)"
+                  " VALUES (?, ?, ?, ?, ?)", (code, percent_off, sen_off, max_uses, time.time()))
+
+
+def remove_promo(code: str) -> bool:
+    with _conn() as c:
+        return c.execute("DELETE FROM promo_codes WHERE code = ?", (code,)).rowcount > 0
+
+
 # --- Purchases & sessions -------------------------------------------------------
 
 
-def add_purchase(purchase_id: str, station: str, minutes: int, amount_sen: int):
+def add_purchase(purchase_id: str, station: str, minutes: int, amount_sen: int, sandbox: bool,
+                 promo_code: str | None = None, discount_sen: int = 0):
     with _conn() as c:
         c.execute(
-            "INSERT INTO purchases (id, station, hours, minutes, amount_sen, status, created_at)"
-            " VALUES (?, ?, ?, ?, ?, 'created', ?)",
-            (purchase_id, station, minutes // 60, minutes, amount_sen, time.time()),
+            "INSERT INTO purchases (id, station, hours, minutes, amount_sen, status, created_at,"
+            " promo_code, discount_sen, sandbox) VALUES (?, ?, ?, ?, ?, 'created', ?, ?, ?, ?)",
+            (purchase_id, station, minutes // 60, minutes, amount_sen, time.time(),
+             promo_code, discount_sen, int(sandbox)),
         )
 
 

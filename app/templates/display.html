@@ -72,7 +72,9 @@
     display: inline-block; vertical-align: top; width: .34rem; height: .34rem; margin-right: .1rem; border-radius: 50%;
     background: #ff3d52; color: #fff; font-size: .17rem; text-align: center;
   }
-  .methods { margin-top: .2rem; font-size: .16rem; color: #8d96aa; }
+  /* CHIP's payment logos: a white card with transparent corners. Width only, so old browsers
+     keep the image's shape. */
+  .methods { display: block; width: 4.2rem; height: auto; margin-top: .22rem; }
 
   /* Playing: big countdown */
   .ring-wrap { position: relative; width: 4.4rem; height: 4.4rem; }
@@ -112,6 +114,7 @@
   .alert, .pill { display: inline-block; margin: 0 .05rem; padding: .06rem .2rem; border-radius: .2rem; font-size: .18rem; line-height: .28rem; }
   .alert { background: rgba(255, 178, 36, .13); color: #ffb224; font-weight: 600; }
   .pill { background: #1c2230; color: #8d96aa; }
+  .pill.test { background: rgba(255, 178, 36, .13); color: #ffb224; }
 
   /* Full-screen moments: paid / time added / time's up */
   .overlay {
@@ -137,6 +140,7 @@
     .info { max-width: none; }
     .qr-card svg { width: 4.4rem; height: 4.4rem; }
     .steps li { margin: 0 .05rem; }
+    .methods { margin-left: auto; margin-right: auto; }
     .ring-wrap { width: 4.6rem; height: 4.6rem; }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -184,7 +188,8 @@
           <li><b>2</b>Pay</li>
           <li><b>3</b>Play</li>
         </ol>
-        <p class="methods">{{ payment_methods() | join(" · ") }}</p>
+        <img class="methods" src="/static/payments.png" width="854" height="190"
+             alt="Pay with CHIP: Mastercard, Visa, Touch 'n Go eWallet, GrabPay, Maybank2u, CIMB Clicks, PBe, RHB Now and more">
       </div>
     </div></section>
 
@@ -217,6 +222,7 @@
   <footer class="foot">
     <div class="alert" id="alert-offline" hidden>⚠ Power switch isn't responding. Please tell the staff.</div>
     <div class="pill" id="reconnecting" hidden>Reconnecting…</div>
+    {% if sandbox() %}<div class="pill test">Test mode · no real payments</div>{% endif %}
   </footer>
 </div>
 

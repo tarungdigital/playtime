@@ -29,7 +29,10 @@ QR code ──> /s/switch1 (pay page + countdown)
 
 1. **Start it:** double-click **`start.bat`** (on a Raspberry Pi: `./start.sh`). The first
    run sets up Python and creates `.env` for you to fill in:
-   - CHIP secret key and brand ID: CHIP dashboard → Developers. Start with the **test** key.
+   - CHIP brand ID and secret keys: CHIP dashboard → Developers. The test-mode key goes in
+     `CHIP_SANDBOX_SECRET_KEY` and the live key in `CHIP_SECRET_KEY`. Try everything in
+     sandbox first, then switch to production in the admin panel. (Upgrading, and your
+     `CHIP_SECRET_KEY` is a test key? Move it to `CHIP_SANDBOX_SECRET_KEY`.)
    - `ADMIN_TOKEN`: a long password for the admin panel.
 2. **Public address:** CHIP has to reach `/chip/callback` over https with no port number.
    While `PUBLIC_URL` is empty or a `trycloudflare.com` address, `start.bat` also starts a free
@@ -61,7 +64,17 @@ Open `/admin` and log in with the `ADMIN_TOKEN` password. It shows:
   +1 hr** free time and **Stop** (tap twice to confirm). **Edit** renames a station or changes
   its plug IP; **+ Add station** adds one. A station's link (`/s/<id>`, `/d/<id>`) never
   changes when you rename it, so printed QR codes keep working.
-- **Settings:** the Tapo account the plugs are switched with.
+- **Payments:** **Switch to sandbox / production** (tap twice to confirm). Sandbox checkouts
+  use CHIP's test mode: no real money, so anyone can start a station with a test payment,
+  and they're left out of revenue. The key is tested with CHIP before switching, and
+  checkouts already started finish in the mode they began in.
+- **Promo codes:** **+ New code** with a % or RM discount and how many times it can be used
+  (blank = no limit). Customers enter it on the pay page under **Have a promo code?** and see
+  the discounted prices before they're sent to CHIP. A discount never takes a price below
+  RM1. A use counts once the payment goes through. While a customer is paying, their checkout
+  holds a use for 15 minutes, so the last use can't go to two people. Sandbox uses are counted
+  separately, so testing doesn't use up a real code.
+- **Settings:** prices, and the Tapo account the plugs are switched with.
 - **Unconfirmed checkouts:** for when a customer says "I paid but it didn't start".
   **Recheck** asks CHIP again and starts their time if the payment went through.
 - **Recent activity:** payments, plus every free-time and stop action by staff.
@@ -87,10 +100,13 @@ the placeholder keys, so start a timer from `/admin` instead.
 | `/print` | Printable QR cards |
 | `/admin` | Staff admin panel |
 | `/api/stations/{station}` | Station state as JSON (used by the countdown) |
+| `POST /s/{station}/promo` | Prices with a promo code, or why it can't be used (pay page's Apply) |
 | `POST /chip/callback` | CHIP success callback |
 | `POST /admin/stations/{station}/add?minutes=N` | Free time (admin login or header `X-Admin-Token`) |
 | `POST /admin/stations/{station}/stop` | End a session now |
 | `POST /admin/purchases/{id}/recheck` | Ask CHIP again whether a checkout was paid |
+| `POST /admin/payment-mode` | `{"sandbox": true}` or `false`: switch CHIP mode |
+| `POST /admin/promos`, `POST /admin/promos/{code}/remove` | Create or remove a promo code |
 | `/healthz` | Plug reachability |
 
 ## Hardware notes

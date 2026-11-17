@@ -71,7 +71,38 @@
   @keyframes pulse { 50% { transform: scale(1.025); } }
 
   /* Hour picker */
-  .section-title { margin: 14px 2px 8px; font-size: 12px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 14px 2px 8px; }
+  .section-title { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
+
+  /* Promo code: a link until tapped, so the page still fits one screen */
+  .promo-link {
+    padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 13px; font-weight: 600;
+    text-decoration: underline; text-underline-offset: 3px; cursor: pointer; touch-action: manipulation;
+  }
+  .promo-link[hidden], .promo-entry[hidden], .promo-note[hidden], .promo-note button[hidden] { display: none; }
+  .promo-entry { display: flex; gap: 8px; margin: 0 0 10px; }
+  .promo-input {
+    flex: 1; min-width: 0; height: 46px; padding: 0 14px; border-radius: 14px; border: 1.5px solid var(--line);
+    background: var(--surface); color: var(--text); font: inherit; font-size: 16px; font-weight: 650;
+    letter-spacing: 1px; text-transform: uppercase;
+  }
+  .promo-input::placeholder { color: var(--muted); font-weight: 400; letter-spacing: 0; text-transform: none; }
+  .promo-input:focus { outline: none; border-color: var(--accent); }
+  .promo-apply {
+    flex: none; height: 46px; padding: 0 18px; border-radius: 14px; border: 1.5px solid var(--line);
+    background: var(--surface-2); color: var(--text); font: inherit; font-size: 15px; font-weight: 700;
+    cursor: pointer; touch-action: manipulation;
+  }
+  .promo-apply[disabled] { opacity: .65; cursor: progress; }
+  .promo-note { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding: 10px 12px 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.35; }
+  .promo-note.ok { background: var(--ok-soft); color: var(--ok); }
+  .promo-note.err { background: var(--danger-soft); color: #ff9aa5; }
+  .promo-note b { font-weight: 750; letter-spacing: .5px; }
+  .promo-note button {
+    flex: none; margin-left: auto; padding: 4px 0; border: 0; background: none; color: inherit;
+    font: inherit; font-size: 13px; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
+  }
+  .tile-price s, .total s { color: var(--muted); font-weight: 400; }
   /* 3 across, or 2 across (.two-up) for 2 or 4 options. In 3 across, a short last row
      stretches to fill the width (6-column grid, tiles span 2). */
   .tiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
@@ -143,6 +174,12 @@
   <h1>{{ station | label }}</h1>
 </section>
 
+{% if sandbox() %}
+<div class="banner warn">
+  <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5l8 14H2l8-14z" fill="currentColor" opacity=".2"/><path d="M10 8v4M10 14.5v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  <span>Test mode: payments go to CHIP's sandbox, so no real money is charged.</span>
+</div>
+{% endif %}
 <div class="banner ok" id="banner-paid" hidden>
   <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor" opacity=".2"/><path d="M6 10.3l2.6 2.6L14.2 7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
   <span>Payment received. The console is powering on. Have fun!</span>
@@ -158,6 +195,10 @@
 <div class="banner err" id="banner-error" hidden>
   <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor" opacity=".2"/><path d="M7 7l6 6M13 7l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
   <span>Couldn't open the payment page. Please try again in a moment.</span>
+</div>
+<div class="banner err" id="banner-badpromo" hidden>
+  <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor" opacity=".2"/><path d="M7 7l6 6M13 7l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  <span>That promo code can't be used any more, so nothing was charged. You can pay without it.</span>
 </div>
 <div class="banner warn" id="banner-offline" hidden>
   <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5l8 14H2l8-14z" fill="currentColor" opacity=".2"/><path d="M10 8v4M10 14.5v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -176,7 +217,20 @@
 </section>
 
 <form method="post" action="/s/{{ station }}/pay" id="pay-form">
-  <h2 class="section-title" id="pay-title">Choose your time</h2>
+  <div class="section-head">
+    <h2 class="section-title" id="pay-title">Choose your time</h2>
+    <button type="button" class="promo-link" id="promo-open">Have a promo code?</button>
+  </div>
+  <div class="promo-entry" id="promo-entry" hidden>
+    <input class="promo-input" id="promo-input" maxlength="24" placeholder="Promo code" aria-label="Promo code"
+           autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="done">
+    <button type="button" class="promo-apply" id="promo-apply">Apply</button>
+  </div>
+  <div class="promo-note" id="promo-note" role="status" hidden>
+    <span id="promo-text"></span>
+    <button type="button" id="promo-remove" hidden>Remove</button>
+  </div>
+  <input type="hidden" name="promo" id="promo-code" value="">
   <div class="tiles{{ ' two-up' if options | length in (2, 4) }}">
     {% for minutes, sen in options.items() %}
     <label class="tile">
@@ -258,7 +312,7 @@
         history.replaceState(null, "", location.pathname);
         buzz();
       }
-    } else if (notice === "failed" || notice === "error") {
+    } else if (notice === "failed" || notice === "error" || notice === "badpromo") {
       $("banner-" + notice).hidden = false;
       history.replaceState(null, "", location.pathname);
       notice = "shown";
@@ -293,10 +347,81 @@
     updateBar();
   }
 
+  // --- Promo code ---
+  let promo = null;  // {code, label, prices: {minutes: sen}} once a code is applied
+  const fullPrice = (input) => Number(input.dataset.price);
+  const priceOf = (input) => promo?.prices[input.value] ?? fullPrice(input);
+  const strike = (text) => Object.assign(document.createElement("s"), { textContent: text });
+
+  function renderPrices() {
+    for (const input of document.querySelectorAll("input[name=minutes]")) {
+      const el = input.parentElement.querySelector(".tile-price");
+      el.replaceChildren();
+      if (priceOf(input) !== fullPrice(input)) el.append(strike(rm(fullPrice(input))), " ");
+      el.append(rm(priceOf(input)));
+    }
+    updateBar();
+  }
+
+  function promoNote(kind, ...text) {
+    $("promo-note").className = "promo-note " + kind;
+    $("promo-text").replaceChildren(...text);
+    $("promo-remove").hidden = kind !== "ok";
+    $("promo-note").hidden = false;
+  }
+
+  function openPromo() {
+    $("promo-open").hidden = true;
+    $("promo-entry").hidden = false;
+    $("promo-input").focus();
+  }
+
+  async function applyPromo() {
+    const code = $("promo-input").value.trim();
+    if (!code) return $("promo-input").focus();
+    const btn = $("promo-apply");
+    btn.disabled = true;
+    btn.textContent = "Checking…";
+    let error = "Couldn't check the code. Please try again.";
+    try {
+      const r = await fetch(`/s/${encodeURIComponent(STATION)}/promo`, { method: "POST", body: new URLSearchParams({ code }) });
+      const res = await r.json().catch(() => ({}));
+      if (r.ok) {
+        promo = res;
+        $("promo-code").value = res.code;
+        $("promo-entry").hidden = true;
+        promoNote("ok", Object.assign(document.createElement("b"), { textContent: res.code }), ` applied: ${res.label}`);
+        buzz();
+        error = null;
+      } else if (typeof res.detail === "string") error = res.detail;
+    } catch (_) { /* offline for a moment */ }
+    if (error) promoNote("err", error);
+    btn.disabled = false;
+    btn.textContent = "Apply";
+    renderPrices();
+  }
+
+  function removePromo() {
+    promo = null;
+    $("promo-code").value = $("promo-input").value = "";
+    $("promo-note").hidden = $("promo-entry").hidden = true;
+    $("promo-open").hidden = false;
+    renderPrices();
+  }
+
+  $("promo-open").addEventListener("click", openPromo);
+  $("promo-apply").addEventListener("click", applyPromo);
+  $("promo-remove").addEventListener("click", removePromo);
+  $("promo-input").addEventListener("input", () => { if (!promo) $("promo-note").hidden = true; });
+  $("promo-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); applyPromo(); }  // don't submit the pay form
+  });
+
   function updateBar() {
     const choice = document.querySelector("input[name=minutes]:checked");
-    $("sum-hours").textContent = choice.dataset.label;
-    $("sum-price").textContent = rm(Number(choice.dataset.price));
+    const discounted = priceOf(choice) !== fullPrice(choice);
+    $("sum-hours").replaceChildren(choice.dataset.label, ...(discounted ? [" · ", strike(rm(fullPrice(choice)))] : []));
+    $("sum-price").textContent = rm(priceOf(choice));
     if (submitting) return;
     const btn = $("pay-btn");
     // Don't let someone pay twice while their first payment is still confirming.
@@ -312,9 +437,16 @@
     } catch (_) { /* offline for a moment; keep counting locally */ }
   }
 
-  $("pay-form").addEventListener("change", () => { buzz(); updateBar(); });
+  $("pay-form").addEventListener("change", (e) => {
+    if (e.target.name === "minutes") { buzz(); updateBar(); }
+  });
   $("pay-form").addEventListener("submit", (e) => {
     if (submitting) return e.preventDefault();
+    // A code typed but not applied: check it first, so the customer sees the price they'll pay.
+    if (!$("promo-entry").hidden && $("promo-input").value.trim()) {
+      e.preventDefault();
+      return applyPromo();
+    }
     submitting = true;
     buzz();
     const btn = $("pay-btn");

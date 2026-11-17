@@ -10,7 +10,8 @@ from urllib.parse import urlsplit
 
 os.environ.update({
     "PLAYTIME_ENV_FILE": "no-such-env-file",  # never read the real .env
-    "CHIP_SECRET_KEY": "test", "CHIP_BRAND_ID": "brand", "CHIP_CLIENT_EMAIL": "t@example.com",
+    "CHIP_SECRET_KEY": "test", "CHIP_SANDBOX_SECRET_KEY": "test-sandbox",
+    "CHIP_BRAND_ID": "brand", "CHIP_CLIENT_EMAIL": "t@example.com",
     "PUBLIC_URL": "https://play.example.com", "PLUG_DRY_RUN": "true",
     "STATIONS": "switch1=10.0.0.1,switch2=10.0.0.2", "ADMIN_TOKEN": "secret",
     "CHECK_INTERVAL_SECONDS": "3600",
@@ -34,18 +35,21 @@ def chip_purchases(monkeypatch):
     purchases = {}
     counter = iter(range(1, 1000))
 
-    async def create_purchase(station, minutes, amount_sen, product_name):
+    async def create_purchase(station, minutes, amount_sen, product_name, sandbox):
         pid = f"p{next(counter)}"
-        purchases[pid] = {"id": pid, "status": "created", "purchase": {"total": amount_sen}}
+        purchases[pid] = {"id": pid, "status": "created", "purchase": {"total": amount_sen},
+                          "is_test": sandbox, "name": product_name}
         return {"id": pid, "checkout_url": f"https://gate.chip-in.asia/p/{pid}/"}
 
-    async def get_purchase(pid):
+    async def get_purchase(pid, sandbox):
+        # Each mode has its own key, so asking with the other mode's key is a bug.
+        assert purchases[pid]["is_test"] == sandbox, "purchase fetched with the wrong mode's key"
         return purchases[pid]
 
     monkeypatch.setattr(chip, "create_purchase", create_purchase)
     monkeypatch.setattr(chip, "get_purchase", get_purchase)
-    monkeypatch.setattr(chip, "_public_key", KEY.public_key())
-    monkeypatch.setattr(chip, "_public_key_fetched_at", time.time())
+    monkeypatch.setattr(chip, "_public_keys", {False: KEY.public_key(), True: KEY.public_key()})
+    monkeypatch.setattr(chip, "_public_keys_fetched_at", {False: time.time(), True: time.time()})
     return purchases
 
 
@@ -59,10 +63,15 @@ def client(chip_purchases):
         yield c
 
 
-def buy(client, chip_purchases, minutes=60, station="switch1"):
-    r = client.post(f"/s/{station}/pay", data={"minutes": minutes}, follow_redirects=False)
-    assert r.status_code == 303
+def buy(client, chip_purchases, minutes=60, station="switch1", promo=""):
+    r = client.post(f"/s/{station}/pay", data={"minutes": minutes, "promo": promo}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("https://gate.chip-in.asia/")
     return urlsplit(r.headers["location"]).path.rstrip("/").split("/")[-1]
+
+
+def pay_now(client, chip_purchases, pid):
+    chip_purchases[pid]["status"] = "paid"
+    assert send_callback(client, chip_purchases[pid]).status_code == 200
 
 
 def send_callback(client, purchase, sign=True):
@@ -335,20 +344,22 @@ def test_payment_method_whitelist(monkeypatch):
         def json(self):
             return {"id": "x", "checkout_url": "https://gate.chip-in.asia/p/x/"}
 
-    async def fake_post(url, json):
+    async def fake_post(url, json, headers):
         sent.clear()
-        sent.update(json)
+        sent.update(json, key=headers["Authorization"])
         return Response()
 
     monkeypatch.setattr(chip._http, "post", fake_post)
     monkeypatch.setattr(config, "CHIP_PAYMENT_METHODS", ["dnqr", "duitnow_qr", "razer_tng"])
-    asyncio.run(chip.create_purchase("switch1", 60, 1000, "Switch1 playtime - 1 hour"))
+    asyncio.run(chip.create_purchase("switch1", 60, 1000, "Switch1 playtime - 1 hour", False))
     assert sent["payment_method_whitelist"] == ["dnqr", "duitnow_qr", "razer_tng"]
+    assert sent["key"] == "Bearer test"
     assert core.payment_methods() == ["DuitNow QR", "Touch 'n Go"]  # duplicates merged
 
     monkeypatch.setattr(config, "CHIP_PAYMENT_METHODS", [])
-    asyncio.run(chip.create_purchase("switch1", 60, 1000, "Switch1 playtime - 1 hour"))
+    asyncio.run(chip.create_purchase("switch1", 60, 1000, "Switch1 playtime - 1 hour", True))
     assert "payment_method_whitelist" not in sent
+    assert sent["key"] == "Bearer test-sandbox"
     assert core.payment_methods() == ["DuitNow QR", "FPX", "e-wallets", "cards"]
 
 
@@ -359,6 +370,165 @@ def test_pages_render(client):
     assert "Switch2" in client.get("/").text
     display = client.get("/d/switch2").text
     assert "Scan to play" in display and display.count('class="segno"') == 2
+    assert 'src="/static/payments.png"' in display and "Test mode" not in display
+    image = client.get("/static/payments.png")
+    assert image.status_code == 200 and image.headers["content-type"] == "image/png"
     assert client.get("/d/nope").status_code == 404
     old = client.get("/station/switch2", follow_redirects=False)
     assert old.status_code == 301 and old.headers["location"] == "/d/switch2"
+
+
+# --- Promo codes --------------------------------------------------------------------
+
+def add_promo(client, code, **body):
+    return client.post("/admin/promos", json={"code": code, **body}, headers=ADMIN)
+
+
+def check_code(client, code, station="switch1"):
+    return client.post(f"/s/{station}/promo", data={"code": code})
+
+
+def test_promo_code_discounts_checkout(client, chip_purchases):
+    assert add_promo(client, "save20", percent_off=20, max_uses=5).json() == {"code": "SAVE20", "label": "20% off"}
+    r = check_code(client, " save 20 ")  # spaces and case don't matter
+    assert r.status_code == 200
+    assert r.json() == {"code": "SAVE20", "label": "20% off",
+                        "prices": {"30": 400, "60": 800, "120": 1600, "180": 2400}}
+    pid = buy(client, chip_purchases, minutes=60, promo="save20")
+    row = db.get_purchase(pid)
+    assert (row["amount_sen"], row["promo_code"], row["discount_sen"]) == (800, "SAVE20", 200)
+    assert chip_purchases[pid]["purchase"]["total"] == 800 and "promo SAVE20" in chip_purchases[pid]["name"]
+    pay_now(client, chip_purchases, pid)  # CHIP's total matches the discounted amount, so it's credited
+    assert remaining(client) > 3500
+    s = client.get("/admin/api/summary", headers=ADMIN).json()
+    assert s["stats"]["today_sen"] == 800
+    assert s["promos"] == [{"code": "SAVE20", "label": "20% off", "max_uses": 5, "uses": 1, "test_uses": 0}]
+    payment = next(a for a in s["activity"] if a["kind"] == "payment")
+    assert (payment["promo"], payment["discount_sen"], payment["sen"]) == ("SAVE20", 200, 800)
+
+
+def test_promo_code_usage_limit(client, chip_purchases):
+    add_promo(client, "ONCE", sen_off=300, max_uses=1)
+    pid = buy(client, chip_purchases, promo="ONCE")
+    assert db.get_purchase(pid)["amount_sen"] == 700
+    # While that customer is paying, the last use is held for them, not given to another station...
+    r = check_code(client, "ONCE", station="switch2")
+    assert r.status_code == 400 and "paying with this code right now" in r.json()["detail"]
+    # ...but they can go back and try again at their own station.
+    assert check_code(client, "ONCE").status_code == 200
+    pay_now(client, chip_purchases, pid)
+    r = check_code(client, "ONCE")
+    assert r.status_code == 400 and "fully used" in r.json()["detail"]
+    # The pay form re-checks, in case the code was used up after Apply.
+    before = len(chip_purchases)
+    r = client.post("/s/switch2/pay", data={"minutes": 60, "promo": "ONCE"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/s/switch2?badpromo=1"
+    assert len(chip_purchases) == before
+    assert "can't be used any more" in client.get("/s/switch2?badpromo=1").text
+    # An abandoned checkout stops holding the code after a while.
+    add_promo(client, "TWICE", percent_off=10, max_uses=1)
+    old = buy(client, chip_purchases, promo="TWICE")
+    with db._conn() as c:
+        c.execute("UPDATE purchases SET created_at = created_at - ? WHERE id = ?", (core.PROMO_HOLD_SECONDS + 1, old))
+    assert check_code(client, "TWICE", station="switch2").status_code == 200
+
+
+def test_promo_code_rules(client, chip_purchases):
+    add_promo(client, "BIG", sen_off=5000)  # no limit
+    assert check_code(client, "BIG").json()["prices"] == {"30": 100, "60": 100, "120": 100, "180": 100}  # RM1 floor
+    for _ in range(3):
+        pay_now(client, chip_purchases, buy(client, chip_purchases, minutes=30, promo="BIG"))
+    assert client.get("/admin/api/summary", headers=ADMIN).json()["promos"][0]["uses"] == 3
+
+    assert add_promo(client, "AB", percent_off=10).status_code == 400  # too short
+    assert add_promo(client, "NO-DASH", percent_off=10).status_code == 400
+    assert add_promo(client, "BOTH", percent_off=10, sen_off=100).status_code == 400
+    assert add_promo(client, "NEITHER").status_code == 400
+    assert add_promo(client, "FREE", percent_off=100).status_code == 400
+    assert add_promo(client, "ZERO", percent_off=10, max_uses=0).status_code == 400
+    assert add_promo(client, "big", percent_off=10).status_code == 400  # already exists
+    assert client.post("/admin/promos", json={"code": "X1Y2", "percent_off": 5}).status_code == 403
+
+    assert check_code(client, "NOPE").status_code == 400
+    assert client.post("/admin/promos/BIG/remove", headers=ADMIN).status_code == 200
+    assert check_code(client, "BIG").status_code == 400
+    # Created again, it starts from zero uses.
+    add_promo(client, "BIG", sen_off=100)
+    assert client.get("/admin/api/summary", headers=ADMIN).json()["promos"][0]["uses"] == 0
+    details = [a["detail"] for a in client.get("/admin/api/summary", headers=ADMIN).json()["activity"]
+               if a["kind"] == "settings"]
+    assert details[:3] == ["promo code BIG added (RM1 off, no limit)", "promo code BIG removed",
+                           "promo code BIG added (RM50 off, no limit)"]
+
+
+# --- Sandbox / production ------------------------------------------------------------
+
+def set_mode(client, sandbox):
+    return client.post("/admin/payment-mode", json={"sandbox": sandbox}, headers=ADMIN)
+
+
+@pytest.fixture
+def chip_accepts_keys(monkeypatch):
+    tried = []
+
+    async def available_methods(sandbox):
+        tried.append(sandbox)
+        return ["duitnow_qr"]
+
+    monkeypatch.setattr(chip, "available_methods", available_methods)
+    return tried
+
+
+def test_sandbox_mode_switch(client, chip_purchases, chip_accepts_keys):
+    assert client.get("/admin/api/summary", headers=ADMIN).json()["payments"] == \
+        {"sandbox": False, "production_key": True, "sandbox_key": True}
+    assert set_mode(client, True).json() == {"sandbox": True}
+    assert chip_accepts_keys == [True]  # the key was tried before switching
+    assert "Test mode" in client.get("/s/switch1").text and "Test mode" in client.get("/d/switch1").text
+
+    test_pid = buy(client, chip_purchases)
+    assert chip_purchases[test_pid]["is_test"] is True and db.get_purchase(test_pid)["sandbox"] == 1
+    pay_now(client, chip_purchases, test_pid)
+    assert remaining(client) > 3500  # test payments do start the station
+    pending = buy(client, chip_purchases, station="switch2")
+
+    # Back to production: checkouts started in sandbox still finish with the sandbox key.
+    set_mode(client, False)
+    assert "Test mode" not in client.get("/s/switch1").text
+    chip_purchases[pending]["status"] = "paid"
+    assert client.post(f"/admin/purchases/{pending}/recheck", headers=ADMIN).json() == {"credited": True}
+    live_pid = buy(client, chip_purchases, minutes=30)
+    assert chip_purchases[live_pid]["is_test"] is False
+    pay_now(client, chip_purchases, live_pid)
+
+    s = client.get("/admin/api/summary", headers=ADMIN).json()
+    assert s["stats"]["today_sen"] == 500 and s["stats"]["today_count"] == 1  # test payments aren't revenue
+    assert [a["sandbox"] for a in s["activity"] if a["kind"] == "payment"] == [False, True, True]
+    assert [a["detail"] for a in s["activity"] if a["kind"] == "settings"] == \
+        ["payments switched to production", "payments switched to sandbox"]
+
+
+def test_sandbox_switch_needs_a_working_key(client, monkeypatch, chip_accepts_keys):
+    monkeypatch.setattr(config, "CHIP_SANDBOX_SECRET_KEY", "")
+    r = set_mode(client, True)
+    assert r.status_code == 400 and "CHIP_SANDBOX_SECRET_KEY" in r.json()["detail"]
+
+    async def rejected(sandbox):
+        raise RuntimeError("401 Unauthorized")
+
+    monkeypatch.setattr(config, "CHIP_SANDBOX_SECRET_KEY", "wrong")
+    monkeypatch.setattr(chip, "available_methods", rejected)
+    assert set_mode(client, True).status_code == 409
+    assert core.sandbox() is False
+    assert client.post("/admin/payment-mode", json={"sandbox": True}).status_code == 403
+
+
+def test_sandbox_promo_uses_counted_apart(client, chip_purchases, chip_accepts_keys):
+    add_promo(client, "ONCE", percent_off=50, max_uses=1)
+    set_mode(client, True)
+    pay_now(client, chip_purchases, buy(client, chip_purchases, promo="ONCE"))
+    assert check_code(client, "ONCE").status_code == 400  # used up in sandbox...
+    set_mode(client, False)
+    assert check_code(client, "ONCE").status_code == 200  # ...but still fresh for real customers
+    promo = client.get("/admin/api/summary", headers=ADMIN).json()["promos"][0]
+    assert (promo["uses"], promo["test_uses"]) == (0, 1)

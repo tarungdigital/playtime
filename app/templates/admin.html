@@ -76,7 +76,13 @@
   .form-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .form-actions .danger { margin-left: auto; }
   .hint.warn { color: var(--warn); }
-  .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; align-items: start; }
+  .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 12px; align-items: start; }
+  .card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
+  .card-actions .hint { margin: 0; }
+  .badge.test, .kind.test { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .code { font-weight: 700; letter-spacing: .5px; }
+  .code-input { text-transform: uppercase; letter-spacing: .5px; }
+  .code-input::placeholder { text-transform: none; letter-spacing: 0; }
   .head-actions { display: flex; align-items: center; gap: 12px; }
   .readout-list { display: grid; grid-template-columns: 1fr auto; margin: 0; }
   .readout-list dt, .readout-list dd { margin: 0; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14.5px; }
@@ -176,6 +182,7 @@
 
 {% block badge %}
 <div class="top-actions">
+  <span class="badge test" id="mode-badge" {% if not summary.payments.sandbox %}hidden{% endif %}>Sandbox</span>
   <span class="badge">Admin</span>
   <form method="post" action="/admin/logout"><button class="link-btn" type="submit">Log out</button></form>
 </div>
@@ -215,6 +222,8 @@
 
 <h2 class="section-title">Settings</h2>
 <div class="settings-grid">
+  <section class="card" id="payments-card"></section>
+  <section class="card" id="promos-card"></section>
   <section class="card" id="prices-card"></section>
   <section class="card" id="tapo-card"></section>
 </div>
@@ -462,8 +471,8 @@
   }
 
   // --- Settings cards: read-only until "Edit" is pressed ------------------------------
-  const editing = { prices: false, tapo: false };
-  const shown = { prices: "", tapo: "" };  // what the read-only views last showed
+  const editing = { prices: false, tapo: false, promos: false };
+  const shown = { prices: "", tapo: "", promos: "", payments: "" };  // what the read-only views last showed
 
   function settingsHead(title, onEdit, ...extras) {
     return h("div", { class: "card-head" }, h("h2", {}, title),
@@ -476,6 +485,116 @@
     const prices = JSON.stringify(data.prices), tapo = JSON.stringify(data.tapo);
     if (!editing.prices && prices !== shown.prices) { shown.prices = prices; showPrices(); }
     if (!editing.tapo && tapo !== shown.tapo) { shown.tapo = tapo; showTapo(); }
+    if (!editing.promos && JSON.stringify(data.promos) !== shown.promos) showPromos();
+    if (JSON.stringify(data.payments) !== shown.payments) showPayments();
+  }
+
+  // --- Payments: CHIP sandbox or production ---------------------------------------------
+  function showPayments() {
+    const p = data.payments;
+    shown.payments = JSON.stringify(p);
+    const to = !p.sandbox;  // what the button switches to
+    const hasKey = to ? p.sandbox_key : p.production_key;
+    const key = (set) => (set ? "Set in .env" : notSet());
+    $("mode-badge").hidden = !p.sandbox;
+    $("payments-card").replaceChildren(
+      settingsHead("Payments", null,
+        h("span", { class: "badge " + (p.sandbox ? "test" : "free") }, p.sandbox ? "Sandbox" : "Production")),
+      p.sandbox
+        ? h("p", { class: "hint warn" }, "Checkouts use CHIP's sandbox: no real money changes hands, so anyone " +
+            "can start a station with a test payment. Test payments aren't counted as revenue.")
+        : h("p", { class: "hint" }, "Checkouts take real payments through CHIP."),
+      h("dl", { class: "readout-list" },
+        h("dt", {}, "Production key"), h("dd", {}, key(p.production_key)),
+        h("dt", {}, "Sandbox key"), h("dd", {}, key(p.sandbox_key))),
+      h("div", { class: "card-actions" },
+        h("button", { class: "btn-s" + (to ? "" : " primary"), type: "button", disabled: !hasKey,
+          onclick: (e) => switchMode(to, e.currentTarget) }, `Switch to ${to ? "sandbox" : "production"}`),
+        hasKey ? null : h("span", { class: "hint" },
+          `Add ${to ? "CHIP_SANDBOX_SECRET_KEY" : "CHIP_SECRET_KEY"} to .env and restart to switch.`)));
+  }
+
+  async function switchMode(sandbox, btn) {
+    if (!confirmedTap(btn, sandbox ? "Tap again: test payments" : "Tap again: real payments")) return;
+    btn.disabled = true;
+    btn.textContent = "Checking key…";
+    try {
+      data.payments = { ...data.payments, ...(await post("/admin/payment-mode", { sandbox })) };
+      toast(sandbox ? "Sandbox on. New checkouts are test payments." : "Production on. New checkouts take real payments.");
+    } catch (e) { toast(e.message); }
+    showPayments();
+    refresh();  // the switch shows up in recent activity
+  }
+
+  // --- Promo codes ----------------------------------------------------------------------
+  function showPromos() {
+    editing.promos = false;
+    shown.promos = JSON.stringify(data.promos);
+    $("promos-card").replaceChildren(
+      settingsHead("Promo codes", null, h("button", { class: "link-inline", type: "button", onclick: newPromo }, "+ New code")),
+      data.promos.length
+        ? h("table", {}, h("tbody", {}, data.promos.map((p) => {
+            const usedUp = p.max_uses !== null && p.uses >= p.max_uses;
+            return h("tr", {},
+              h("td", {}, h("span", { class: "code" }, p.code)),
+              h("td", {}, p.label),
+              h("td", {}, p.max_uses === null ? `${p.uses} used` : `${p.uses} of ${p.max_uses} used`,
+                usedUp ? [" ", h("span", { class: "kind stop" }, "Used up")] : null,
+                p.test_uses ? h("span", { class: "muted" }, ` · ${p.test_uses} test`) : null),
+              h("td", { class: "num" }, h("button", { class: "btn-s danger", type: "button",
+                onclick: (e) => removePromo(p.code, e.currentTarget) }, "Remove")));
+          })))
+        : h("div", { class: "empty-row" }, "No codes yet. Customers enter them on the pay page, under “Have a promo code?”."));
+  }
+
+  function newPromo() {
+    editing.promos = true;
+    const f = { result: formResult() };
+    const save = async () => {
+      const value = parseFloat(f.amount.value.replace(",", "."));
+      const percent = f.kind.value === "percent";
+      if (!(value > 0)) throw new Error("Enter the discount, e.g. 20 for 20% off or 5 for RM5 off.");
+      if (percent && !Number.isInteger(value)) throw new Error("Use a whole percentage, e.g. 15.");
+      const uses = f.uses.value.trim();
+      if (uses && !/^\d+$/.test(uses)) throw new Error("Enter the number of uses, or leave it blank for no limit.");
+      const r = await post("/admin/promos", {
+        code: f.code.value, max_uses: uses ? Number(uses) : null,
+        percent_off: percent ? value : 0, sen_off: percent ? 0 : Math.round(value * 100),
+      });
+      toast(`Added ${r.code}: ${r.label}`);
+      await refresh();
+      showPromos();
+    };
+    $("promos-card").replaceChildren(h("form", { class: "panel-form", onsubmit: submitHandler(f, "Create code", save) },
+      settingsHead("New promo code", null),
+      h("p", { class: "hint" }, "Customers type it on the pay page before they're sent to CHIP. " +
+        "A discount never takes a price below RM1. Sandbox test payments don't use up a code."),
+      h("label", { class: "field-label" }, "Code",
+        f.code = h("input", { class: "field code-input", maxlength: 20, placeholder: "e.g. WELCOME10",
+          autocomplete: "off", spellcheck: "false", oninput: () => f.reset() })),
+      h("div", { class: "field-grid" },
+        h("label", { class: "field-label" }, "Discount",
+          h("div", { class: "field-row" },
+            f.amount = h("input", { class: "field mono", inputmode: "decimal", placeholder: "20", oninput: () => f.reset() }),
+            f.kind = h("select", { class: "field", "aria-label": "Discount type", onchange: () => f.reset() },
+              h("option", { value: "percent" }, "% off"), h("option", { value: "rm" }, "RM off")))),
+        h("label", { class: "field-label" }, "Uses",
+          f.uses = h("input", { class: "field mono", inputmode: "numeric", placeholder: "No limit", oninput: () => f.reset() }))),
+      f.result,
+      h("div", { class: "form-actions" },
+        f.submit = h("button", { class: "btn-s primary", type: "submit" }, "Create code"),
+        h("button", { class: "btn-s", type: "button", onclick: showPromos }, "Cancel"))));
+    f.code.focus();
+  }
+
+  async function removePromo(code, btn) {
+    if (!confirmedTap(btn, "Tap again to remove")) return;
+    btn.disabled = true;
+    try {
+      await post(`/admin/promos/${encodeURIComponent(code)}/remove`);
+      toast(`Removed ${code}`);
+      await refresh();
+    } catch (e) { toast(e.message); btn.disabled = false; }
   }
 
   // --- Prices ------------------------------------------------------------------------
@@ -771,7 +890,7 @@
     $("pending").replaceChildren(h("table", {}, h("tbody", {}, data.pending.map((p) =>
       h("tr", {},
         h("td", {}, stationLabel(p.station)),
-        h("td", {}, `${dur(p.minutes)} · ${rm(p.sen)}`),
+        h("td", {}, `${dur(p.minutes)} · ${rm(p.sen)}`, p.sandbox ? [" ", h("span", { class: "kind test" }, "Test")] : null),
         h("td", { class: "muted" }, ago(p.created_at)),
         h("td", { class: "num" }, h("button", { class: "btn-s", type: "button", onclick: (e) => recheck(p, e.currentTarget) }, "Recheck")))))));
   }
@@ -794,11 +913,13 @@
       return;
     }
     $("activity").replaceChildren(...data.activity.map((a) => {
-      const kind = a.kind === "payment" ? h("span", { class: "kind payment" }, "Payment")
+      const kind = a.kind === "payment" && a.sandbox ? h("span", { class: "kind test" }, "Test payment")
+        : a.kind === "payment" ? h("span", { class: "kind payment" }, "Payment")
         : a.kind === "add" ? h("span", { class: "kind" }, "Free time")
         : a.kind === "ip" || a.kind === "settings" ? h("span", { class: "kind" }, "Settings")
         : h("span", { class: "kind stop" }, "Stopped");
-      const detail = a.kind === "payment" ? dur(a.minutes)
+      const detail = a.kind === "payment"
+          ? dur(a.minutes) + (a.promo ? ` · ${a.promo} −${rm(a.discount_sen)}` : "")
         : a.kind === "add" ? `+${dur(a.minutes)} by staff`
         : a.kind === "ip" ? `Plug IP ${a.detail}`
         : a.kind === "settings" ? a.detail.charAt(0).toUpperCase() + a.detail.slice(1)

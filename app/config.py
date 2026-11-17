@@ -22,7 +22,10 @@ def _parse_stations(raw: str) -> dict[str, str]:
 SHOP_NAME = os.environ.get("SHOP_NAME", "Playtime")
 
 CHIP_API = "https://gate.chip-in.asia/api/v1"
-CHIP_SECRET_KEY = os.environ["CHIP_SECRET_KEY"]
+# CHIP gives each account a live key and a test-mode key (same brand ID, same API). Set
+# either or both; the admin panel switches between production and sandbox.
+CHIP_SECRET_KEY = os.environ.get("CHIP_SECRET_KEY", "")  # production (live)
+CHIP_SANDBOX_SECRET_KEY = os.environ.get("CHIP_SANDBOX_SECRET_KEY", "")  # test mode
 CHIP_BRAND_ID = os.environ["CHIP_BRAND_ID"]
 # CHIP requires a client email on every purchase; receipts go here.
 CHIP_CLIENT_EMAIL = os.environ["CHIP_CLIENT_EMAIL"]

@@ -70,14 +70,29 @@ def payment_methods() -> list[str]:
     return list(dict.fromkeys(names))  # dnqr + duitnow_qr -> one "DuitNow QR"
 
 
+def sandbox() -> bool:
+    """True while new checkouts use CHIP's sandbox (test payments, no real money).
+    Switched in the admin panel; until then, sandbox only if there's no production key."""
+    saved = db.get_setting("chip_mode")
+    return saved == "sandbox" if saved else not config.CHIP_SECRET_KEY
+
+
+def set_sandbox(on: bool):
+    db.set_setting("chip_mode", "sandbox" if on else "production")
+
+
 async def check_payment_methods():
-    """Startup: warn about CHIP_PAYMENT_METHOD codes this CHIP account doesn't offer,
-    since CHIP would then refuse to create purchases."""
+    """Startup: warn about a missing CHIP key, and about CHIP_PAYMENT_METHOD codes this
+    CHIP account doesn't offer, since CHIP would then refuse to create purchases."""
+    if not chip.secret_key(sandbox()):
+        log.warning("no CHIP %s key in .env, so customers can't pay. Add it, or switch mode in the admin panel.",
+                    "CHIP_SANDBOX_SECRET_KEY" if sandbox() else "CHIP_SECRET_KEY")
+        return
     wanted = config.CHIP_PAYMENT_METHODS + ([config.CHIP_PREFERRED_METHOD] if config.CHIP_PREFERRED_METHOD else [])
     if not wanted:
         return
     try:
-        available = await chip.available_methods()
+        available = await chip.available_methods(sandbox())
     except Exception as e:
         log.warning("couldn't check payment methods with CHIP: %r", e)
         return
@@ -91,6 +106,7 @@ async def check_payment_methods():
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.globals["payment_methods"] = payment_methods
+templates.env.globals["sandbox"] = sandbox
 templates.env.filters["rm"] = rm
 templates.env.filters["label"] = label
 templates.env.filters["duration"] = duration
@@ -136,6 +152,46 @@ def set_options(new: dict[int, int]):
     db.set_setting("play_options", ",".join(f"{m}:{sen}" for m, sen in new.items()))
     options.clear()
     options.update(new)
+
+
+# --- Promo codes ----------------------------------------------------------------
+
+MIN_CHARGE_SEN = 100  # RM1: a discount never takes a checkout below this
+# A checkout with a code holds one of its uses this long, in case that customer is still
+# paying. Only against other stations, so the same customer can go back and try again.
+PROMO_HOLD_SECONDS = 15 * 60
+
+
+class PromoError(Exception):
+    """Why a promo code can't be used, worded for customers."""
+
+
+def clean_code(raw: str) -> str:
+    """' save 20 ' -> 'SAVE20'"""
+    return "".join(raw.split()).upper()
+
+
+def promo_label(promo) -> str:
+    """'20% off' or 'RM2 off'"""
+    return f"{promo['percent_off']}% off" if promo["percent_off"] else f"{rm(promo['sen_off'])} off"
+
+
+def promo_price(promo, sen: int) -> int:
+    off = round(sen * promo["percent_off"] / 100) if promo["percent_off"] else promo["sen_off"]
+    return max(sen - off, min(sen, MIN_CHARGE_SEN))
+
+
+def usable_promo(raw: str, station: str):
+    """The promo code if a customer at this station can use it now; PromoError if not."""
+    promo = db.get_promo(clean_code(raw), sandbox(), station, PROMO_HOLD_SECONDS)
+    if promo is None:
+        raise PromoError("That code isn't valid. Check it and try again.")
+    if promo["max_uses"] is not None:
+        if promo["uses"] >= promo["max_uses"]:
+            raise PromoError("Sorry, this code has been fully used.")
+        if promo["uses"] + promo["held"] >= promo["max_uses"]:
+            raise PromoError("Someone is paying with this code right now. Try again in a few minutes.")
+    return promo
 
 
 def hourly_sen() -> int:
@@ -209,7 +265,7 @@ async def credit_if_paid(purchase_id: str) -> bool:
     row = db.get_purchase(purchase_id)
     if row is None or row["status"] == "paid":
         return False
-    purchase = await chip.get_purchase(purchase_id)
+    purchase = await chip.get_purchase(purchase_id, bool(row["sandbox"]))
     if purchase.get("status") not in chip.PAID_STATUSES:
         return False
     total = purchase.get("purchase", {}).get("total")
@@ -218,6 +274,7 @@ async def credit_if_paid(purchase_id: str) -> bool:
         return False
     if db.mark_paid_and_credit(purchase_id) is None:
         return False
-    log.info("%s: +%d min from purchase %s", row["station"], row["minutes"], purchase_id)
+    log.info("%s: +%d min from purchase %s%s", row["station"], row["minutes"], purchase_id,
+             " (sandbox)" if row["sandbox"] else "")
     spawn(sync_plug(row["station"]))
     return True

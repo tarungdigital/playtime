@@ -5,14 +5,17 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import segno
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import admin, chip, config, db
-from .core import (check_payment_methods, credit_if_paid, duration, enforce_loop, hourly_sen, label,
-                   load_config, log, options, plug_online, spawn, state, stations, templates)
+from .core import (PromoError, check_payment_methods, credit_if_paid, duration, enforce_loop, hourly_sen,
+                   label, load_config, log, options, plug_online, promo_label, promo_price, sandbox, spawn,
+                   state, stations, templates, usable_promo)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -29,6 +32,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(admin.router)
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+# One checkout with a promo code at a time, so two customers can't both take its last use.
+_promo_lock = asyncio.Lock()
 
 
 def _require_station(station: str):
@@ -47,7 +53,8 @@ async def index(request: Request):
 
 
 @app.get("/s/{station}")
-async def station_page(request: Request, station: str, paid: int = 0, failed: int = 0, error: int = 0):
+async def station_page(request: Request, station: str, paid: int = 0, failed: int = 0, error: int = 0,
+                       badpromo: int = 0):
     """Landing page for the printed QR code: pay, then watch the countdown."""
     _require_station(station)
     if paid:
@@ -64,23 +71,54 @@ async def station_page(request: Request, station: str, paid: int = 0, failed: in
         "price_sen": hourly_sen(),
         "options": options,
         "default_minutes": 60 if 60 in options else next(iter(options)),
-        "notice": "paid" if paid else "failed" if failed else "error" if error else None,
+        "notice": ("paid" if paid else "failed" if failed else "error" if error
+                   else "badpromo" if badpromo else None),
     })
 
 
-@app.post("/s/{station}/pay")
-async def pay(station: str, minutes: int = Form(...)):
+@app.post("/s/{station}/promo")
+async def check_promo(station: str, code: str = Form("")):
+    """The pay page's Apply button: what each option costs with this code."""
     _require_station(station)
-    amount = options.get(minutes)
-    if amount is None:
-        raise HTTPException(400, "Invalid play time")
-    name = f"{label(station)} playtime - {duration(minutes)}"
     try:
-        purchase = await chip.create_purchase(station, minutes, amount, name)
+        promo = usable_promo(code, station)
+    except PromoError as e:
+        await asyncio.sleep(1)  # slow down guessing codes
+        raise HTTPException(400, str(e))
+    return {"code": promo["code"], "label": promo_label(promo),
+            "prices": {m: promo_price(promo, sen) for m, sen in options.items()}}
+
+
+@app.post("/s/{station}/pay")
+async def pay(station: str, minutes: int = Form(...), promo: str = Form("")):
+    _require_station(station)
+    price = options.get(minutes)
+    if price is None:
+        raise HTTPException(400, "Invalid play time")
+    if not promo.strip():
+        return await _checkout(station, minutes, price)
+    async with _promo_lock:
+        try:
+            code = usable_promo(promo, station)
+        except PromoError:  # e.g. its last use went while the customer was choosing
+            return RedirectResponse(f"/s/{station}?badpromo=1", status_code=303)
+        return await _checkout(station, minutes, price, code)
+
+
+async def _checkout(station: str, minutes: int, price: int, promo=None):
+    """Create the CHIP purchase and send the customer to its checkout page."""
+    amount = promo_price(promo, price) if promo else price
+    name = f"{label(station)} playtime - {duration(minutes)}"
+    if promo:
+        name += f" (promo {promo['code']})"
+    test = sandbox()
+    try:
+        purchase = await chip.create_purchase(station, minutes, amount, name, test)
     except Exception as e:
         log.error("%s: CHIP purchase creation failed: %r", station, e)
         return RedirectResponse(f"/s/{station}?error=1", status_code=303)
-    db.add_purchase(purchase["id"], station, minutes, amount)
+    db.add_purchase(purchase["id"], station, minutes, amount, test,
+                    promo["code"] if promo else None, price - amount)
     url = purchase["checkout_url"]
     if config.CHIP_PREFERRED_METHOD:
         url += ("&" if "?" in url else "?") + "preferred=" + config.CHIP_PREFERRED_METHOD
@@ -137,10 +175,17 @@ async def print_qr(request: Request):
 @app.post("/chip/callback")
 async def chip_callback(request: Request):
     body = await request.body()  # raw bytes: the signature covers them exactly
-    if not await chip.verify_callback(body, request.headers.get("X-Signature", "")):
+    try:
+        data = json.loads(body)
+    except ValueError:
+        raise HTTPException(400, "Not JSON")
+    purchase_id = data.get("id") if isinstance(data, dict) else None
+    # Checked with the key of the mode the purchase was made in, even if it's been switched since.
+    row = db.get_purchase(purchase_id) if isinstance(purchase_id, str) else None
+    test = bool(row["sandbox"]) if row else sandbox()
+    if not await chip.verify_callback(body, request.headers.get("X-Signature", ""), test):
         raise HTTPException(401, "Bad signature")
-    purchase_id = json.loads(body).get("id")
-    if purchase_id:
+    if row:
         # Raises if CHIP's API is unreachable -> non-2xx -> CHIP retries later.
         await credit_if_paid(purchase_id)
     return {"ok": True}

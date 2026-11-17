@@ -14,16 +14,22 @@ from . import config
 # so a delayed callback retry may see a later one.
 PAID_STATUSES = {"paid", "cleared", "settled"}
 
-_http = httpx.AsyncClient(
-    base_url=config.CHIP_API,
-    headers={"Authorization": f"Bearer {config.CHIP_SECRET_KEY}"},
-    timeout=20,
-)
-_public_key = None
-_public_key_fetched_at = 0.0
+_http = httpx.AsyncClient(base_url=config.CHIP_API, timeout=20)
+# Per mode (sandbox True/False): CHIP's public key for callbacks, and when it was fetched.
+_public_keys: dict[bool, object] = {}
+_public_keys_fetched_at: dict[bool, float] = {}
 
 
-async def create_purchase(station: str, minutes: int, amount_sen: int, product_name: str) -> dict:
+def secret_key(sandbox: bool) -> str:
+    return config.CHIP_SANDBOX_SECRET_KEY if sandbox else config.CHIP_SECRET_KEY
+
+
+def _auth(sandbox: bool) -> dict:
+    return {"Authorization": f"Bearer {secret_key(sandbox)}"}
+
+
+async def create_purchase(station: str, minutes: int, amount_sen: int, product_name: str,
+                          sandbox: bool) -> dict:
     body = {
         "brand_id": config.CHIP_BRAND_ID,
         "client": {"email": config.CHIP_CLIENT_EMAIL},
@@ -38,35 +44,35 @@ async def create_purchase(station: str, minutes: int, amount_sen: int, product_n
     }
     if config.CHIP_PAYMENT_METHODS:
         body["payment_method_whitelist"] = config.CHIP_PAYMENT_METHODS
-    r = await _http.post("/purchases/", json=body)
+    r = await _http.post("/purchases/", json=body, headers=_auth(sandbox))
     r.raise_for_status()
     return r.json()
 
 
-async def available_methods() -> list[str]:
-    """Payment method codes this CHIP account can offer in MYR."""
-    r = await _http.get("/payment_methods/", params={"brand_id": config.CHIP_BRAND_ID, "currency": "MYR"})
+async def available_methods(sandbox: bool) -> list[str]:
+    """Payment method codes this CHIP account can offer in MYR. Also tests the key."""
+    r = await _http.get("/payment_methods/", params={"brand_id": config.CHIP_BRAND_ID, "currency": "MYR"},
+                        headers=_auth(sandbox))
     r.raise_for_status()
     return r.json().get("available_payment_methods", [])
 
 
-async def get_purchase(purchase_id: str) -> dict:
-    r = await _http.get(f"/purchases/{purchase_id}/")
+async def get_purchase(purchase_id: str, sandbox: bool) -> dict:
+    r = await _http.get(f"/purchases/{purchase_id}/", headers=_auth(sandbox))
     r.raise_for_status()
     return r.json()
 
 
-async def _load_public_key(refresh: bool = False):
-    global _public_key, _public_key_fetched_at
+async def _load_public_key(sandbox: bool, refresh: bool = False):
     # Refresh at most every 10 min so junk requests can't hammer CHIP's API.
-    stale = time.time() - _public_key_fetched_at > 600
-    if _public_key is None or (refresh and stale):
-        r = await _http.get("/public_key/")
+    stale = time.time() - _public_keys_fetched_at.get(sandbox, 0) > 600
+    if sandbox not in _public_keys or (refresh and stale):
+        r = await _http.get("/public_key/", headers=_auth(sandbox))
         r.raise_for_status()
         # Body is a JSON string containing the PEM.
-        _public_key = serialization.load_pem_public_key(r.json().encode())
-        _public_key_fetched_at = time.time()
-    return _public_key
+        _public_keys[sandbox] = serialization.load_pem_public_key(r.json().encode())
+        _public_keys_fetched_at[sandbox] = time.time()
+    return _public_keys[sandbox]
 
 
 def _verify_with(key, body: bytes, signature: bytes) -> bool:
@@ -77,13 +83,14 @@ def _verify_with(key, body: bytes, signature: bytes) -> bool:
         return False
 
 
-async def verify_callback(body: bytes, signature_b64: str) -> bool:
-    """X-Signature = base64 RSA PKCS#1 v1.5 / SHA-256 over the raw body."""
+async def verify_callback(body: bytes, signature_b64: str, sandbox: bool) -> bool:
+    """X-Signature = base64 RSA PKCS#1 v1.5 / SHA-256 over the raw body, signed with the
+    key of the mode (sandbox or production) the purchase was made in."""
     try:
         signature = base64.b64decode(signature_b64, validate=True)
     except ValueError:
         return False
-    if _verify_with(await _load_public_key(), body, signature):
+    if _verify_with(await _load_public_key(sandbox), body, signature):
         return True
     # Key may have been rotated; retry once with a fresh copy.
-    return _verify_with(await _load_public_key(refresh=True), body, signature)
+    return _verify_with(await _load_public_key(sandbox, refresh=True), body, signature)

@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import hmac
 import ipaddress
+import re
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -11,9 +12,10 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from . import config, db, plug
-from .core import (add_station, credit_if_paid, duration, label, options, plug_on, remove_station,
-                   rm, set_options, spawn, state, stations, sync_plug, templates, update_station)
+from . import chip, config, db, plug
+from .core import (add_station, clean_code, credit_if_paid, duration, label, options, plug_on, promo_label,
+                   remove_station, rm, sandbox, set_options, set_sandbox, spawn, state, stations, sync_plug,
+                   templates, update_station)
 
 router = APIRouter(prefix="/admin")
 
@@ -92,8 +94,9 @@ def summary_data() -> dict:
     paid = db.paid_since(min(yesterday, week_start, month_start).timestamp())
 
     def total(since: datetime, until: datetime | None = None):
-        rows = [p for p in paid
-                if p["paid_at"] >= since.timestamp() and (until is None or p["paid_at"] < until.timestamp())]
+        """Revenue: sandbox payments are tests, not money."""
+        rows = [p for p in paid if not p["sandbox"] and p["paid_at"] >= since.timestamp()
+                and (until is None or p["paid_at"] < until.timestamp())]
         return sum(p["amount_sen"] for p in rows), len(rows), sum(p["minutes"] for p in rows)
 
     today_sen, today_count, today_minutes = total(today)
@@ -114,8 +117,9 @@ def summary_data() -> dict:
     username, password = plug.credentials()
 
     activity = [
-        {"at": p["paid_at"], "kind": "payment", "station": p["station"],
-         "minutes": p["minutes"], "sen": p["amount_sen"]}
+        {"at": p["paid_at"], "kind": "payment", "station": p["station"], "minutes": p["minutes"],
+         "sen": p["amount_sen"], "sandbox": bool(p["sandbox"]), "promo": p["promo_code"],
+         "discount_sen": p["discount_sen"]}
         for p in paid[:25]
     ] + [
         {"at": a["at"], "kind": a["action"], "station": a["station"],
@@ -126,7 +130,7 @@ def summary_data() -> dict:
 
     pending = [
         {"id": p["id"], "station": p["station"], "minutes": p["minutes"],
-         "sen": p["amount_sen"], "created_at": p["created_at"]}
+         "sen": p["amount_sen"], "created_at": p["created_at"], "sandbox": bool(p["sandbox"])}
         for p in db.recent_unpaid(max_age_seconds=3600, limit=10)
     ]
 
@@ -136,6 +140,14 @@ def summary_data() -> dict:
         "prices": [{"minutes": m, "sen": sen} for m, sen in options.items()],
         # The password itself never leaves the server.
         "tapo": {"username": username, "password_set": bool(password), "simulated": config.PLUG_DRY_RUN},
+        # Which keys are in .env, never the keys themselves.
+        "payments": {"sandbox": sandbox(), "production_key": bool(config.CHIP_SECRET_KEY),
+                     "sandbox_key": bool(config.CHIP_SANDBOX_SECRET_KEY)},
+        "promos": [
+            {"code": p["code"], "label": promo_label(p), "max_uses": p["max_uses"],
+             "uses": p["uses"], "test_uses": p["test_uses"]}
+            for p in db.promo_codes()
+        ],
         "stats": {
             "today_sen": today_sen,
             "today_count": today_count,
@@ -337,6 +349,66 @@ async def set_prices(body: Prices):
     if changes:
         db.log_staff_action("", "settings", detail="prices: " + "; ".join(changes))
     return {"prices": [{"minutes": m, "sen": sen} for m, sen in options.items()]}
+
+
+class PaymentMode(BaseModel):
+    sandbox: bool
+
+
+@router.post("/payment-mode", dependencies=[Depends(require_admin)])
+async def set_payment_mode(body: PaymentMode):
+    """Switch new checkouts between CHIP's sandbox (test payments) and production. Checkouts
+    already started finish in the mode they began in."""
+    name, env = ("sandbox", "CHIP_SANDBOX_SECRET_KEY") if body.sandbox else ("production", "CHIP_SECRET_KEY")
+    if not chip.secret_key(body.sandbox):
+        raise HTTPException(400, f"There's no {name} key yet. Add {env} to .env and restart.")
+    try:  # a wrong key would stop every customer paying, so check CHIP accepts it first
+        await asyncio.wait_for(chip.available_methods(body.sandbox), 15)
+    except Exception as e:
+        raise HTTPException(409, f"CHIP didn't accept the {name} key in .env "
+                                 f"({str(e)[:120] or type(e).__name__}). Check {env} and CHIP_BRAND_ID.")
+    if body.sandbox != sandbox():
+        set_sandbox(body.sandbox)
+        db.log_staff_action("", "settings", detail=f"payments switched to {name}")
+    return {"sandbox": sandbox()}
+
+
+class PromoIn(BaseModel):
+    code: str
+    percent_off: int = 0
+    sen_off: int = 0
+    max_uses: int | None = None  # None = no limit
+
+
+@router.post("/promos", dependencies=[Depends(require_admin)])
+async def create_promo(body: PromoIn):
+    code = clean_code(body.code)
+    if not re.fullmatch(r"[A-Z0-9]{3,20}", code):
+        raise HTTPException(400, "Codes are 3 to 20 letters and numbers, e.g. WELCOME10.")
+    if bool(body.percent_off) == bool(body.sen_off):
+        raise HTTPException(400, "Give the discount as a percentage or an amount in RM.")
+    if body.percent_off and not 1 <= body.percent_off <= 99:
+        raise HTTPException(400, "A percentage discount must be between 1% and 99%.")
+    if body.sen_off and not 10 <= body.sen_off <= 100_000:
+        raise HTTPException(400, "An RM discount must be between RM0.10 and RM1,000.")
+    if body.max_uses is not None and not 1 <= body.max_uses <= 100_000:
+        raise HTTPException(400, "Uses must be between 1 and 100,000, or blank for no limit.")
+    if any(p["code"] == code for p in db.promo_codes()):
+        raise HTTPException(400, f"There's already a code {code}.")
+    db.add_promo(code, body.percent_off, body.sen_off, body.max_uses)
+    discount = promo_label({"percent_off": body.percent_off, "sen_off": body.sen_off})
+    uses = f"{body.max_uses} use{'s' if body.max_uses != 1 else ''}" if body.max_uses else "no limit"
+    db.log_staff_action("", "settings", detail=f"promo code {code} added ({discount}, {uses})")
+    return {"code": code, "label": discount}
+
+
+@router.post("/promos/{code}/remove", dependencies=[Depends(require_admin)])
+async def delete_promo(code: str):
+    """Customers can't use it any more; checkouts already started with it keep their price."""
+    if not db.remove_promo(code):
+        raise HTTPException(404, "Unknown promo code")
+    db.log_staff_action("", "settings", detail=f"promo code {code} removed")
+    return {"ok": True}
 
 
 @router.post("/purchases/{purchase_id}/recheck", dependencies=[Depends(require_admin)])
