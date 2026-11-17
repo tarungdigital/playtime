@@ -13,9 +13,9 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import admin, chip, config, db
-from .core import (PromoError, check_payment_methods, credit_if_paid, duration, enforce_loop, hourly_sen,
-                   label, load_config, log, options, plug_online, promo_label, promo_price, sandbox, spawn,
-                   state, stations, templates, usable_promo)
+from .core import (PromoError, check_payment_methods, credit_free, credit_if_paid, duration, enforce_loop,
+                   hourly_sen, label, load_config, log, options, plug_online, promo_label, promo_price, sandbox,
+                   spawn, state, stations, templates, usable_promo)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -54,7 +54,7 @@ async def index(request: Request):
 
 @app.get("/s/{station}")
 async def station_page(request: Request, station: str, paid: int = 0, failed: int = 0, error: int = 0,
-                       badpromo: int = 0):
+                       badpromo: int = 0, free: int = 0):
     """Landing page for the printed QR code: pay, then watch the countdown."""
     _require_station(station)
     if paid:
@@ -72,7 +72,7 @@ async def station_page(request: Request, station: str, paid: int = 0, failed: in
         "options": options,
         "default_minutes": 60 if 60 in options else next(iter(options)),
         "notice": ("paid" if paid else "failed" if failed else "error" if error
-                   else "badpromo" if badpromo else None),
+                   else "badpromo" if badpromo else "free" if free else None),
     })
 
 
@@ -108,12 +108,15 @@ async def pay(station: str, minutes: int = Form(...), promo: str = Form("")):
 async def _checkout(station: str, minutes: int, price: int, promo=None):
     """Create the CHIP purchase and send the customer to its checkout page."""
     amount = promo_price(promo, price) if promo else price
+    test = sandbox()
+    if amount == 0:  # a code covering the whole price: nothing to pay
+        credit_free(station, minutes, price, promo, test)
+        return RedirectResponse(f"/s/{station}?free=1", status_code=303)
     name = f"{label(station)} playtime - {duration(minutes)}"
     if promo:
         name += f" (promo {promo['code']})"
-    test = sandbox()
     try:
-        purchase = await chip.create_purchase(station, minutes, amount, name, test)
+        purchase = await chip.create_purchase(station, minutes, amount, name, test, label(station))
     except Exception as e:
         log.error("%s: CHIP purchase creation failed: %r", station, e)
         return RedirectResponse(f"/s/{station}?error=1", status_code=303)

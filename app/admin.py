@@ -13,9 +13,9 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from . import chip, config, db, plug
-from .core import (add_station, clean_code, credit_if_paid, duration, label, options, plug_on, promo_label,
-                   remove_station, rm, sandbox, set_options, set_sandbox, spawn, state, stations, sync_plug,
-                   templates, update_station)
+from .core import (EWALLETS, add_station, checkout_methods, clean_code, credit_if_paid, duration, label,
+                   method_names, offered_methods, options, plug_on, promo_label, remove_station, rm, sandbox,
+                   set_options, set_sandbox, spawn, state, stations, sync_plug, templates, update_station)
 
 router = APIRouter(prefix="/admin")
 
@@ -94,8 +94,8 @@ def summary_data() -> dict:
     paid = db.paid_since(min(yesterday, week_start, month_start).timestamp())
 
     def total(since: datetime, until: datetime | None = None):
-        """Revenue: sandbox payments are tests, not money."""
-        rows = [p for p in paid if not p["sandbox"] and p["paid_at"] >= since.timestamp()
+        """Sales: sandbox payments are tests, and 100% promo codes are free play, not money."""
+        rows = [p for p in paid if not p["sandbox"] and p["amount_sen"] and p["paid_at"] >= since.timestamp()
                 and (until is None or p["paid_at"] < until.timestamp())]
         return sum(p["amount_sen"] for p in rows), len(rows), sum(p["minutes"] for p in rows)
 
@@ -115,6 +115,8 @@ def summary_data() -> dict:
         for s, cfg in stations.items()
     ]
     username, password = plug.credentials()
+    test = sandbox()
+    methods = checkout_methods(test)
 
     activity = [
         {"at": p["paid_at"], "kind": "payment", "station": p["station"], "minutes": p["minutes"],
@@ -141,8 +143,15 @@ def summary_data() -> dict:
         # The password itself never leaves the server.
         "tapo": {"username": username, "password_set": bool(password), "simulated": config.PLUG_DRY_RUN},
         # Which keys are in .env, never the keys themselves.
-        "payments": {"sandbox": sandbox(), "production_key": bool(config.CHIP_SECRET_KEY),
-                     "sandbox_key": bool(config.CHIP_SANDBOX_SECRET_KEY)},
+        "payments": {
+            "sandbox": test, "production_key": bool(config.CHIP_SECRET_KEY),
+            "sandbox_key": bool(config.CHIP_SANDBOX_SECRET_KEY),
+            # What customers can pay with (None until CHIP has been asked), and whether that
+            # includes e-wallets: "on", "excluded" by CHIP_PAYMENT_METHOD, or "off" at CHIP.
+            "methods": None if methods is None else method_names(methods),
+            "ewallets": None if methods is None else "on" if EWALLETS & set(methods)
+            else "excluded" if EWALLETS & set(offered_methods[test]) else "off",
+        },
         "promos": [
             {"code": p["code"], "label": promo_label(p), "max_uses": p["max_uses"],
              "uses": p["uses"], "test_uses": p["test_uses"]}
@@ -363,7 +372,7 @@ async def set_payment_mode(body: PaymentMode):
     if not chip.secret_key(body.sandbox):
         raise HTTPException(400, f"There's no {name} key yet. Add {env} to .env and restart.")
     try:  # a wrong key would stop every customer paying, so check CHIP accepts it first
-        await asyncio.wait_for(chip.available_methods(body.sandbox), 15)
+        offered_methods[body.sandbox] = await asyncio.wait_for(chip.available_methods(body.sandbox), 15)
     except Exception as e:
         raise HTTPException(409, f"CHIP didn't accept the {name} key in .env "
                                  f"({str(e)[:120] or type(e).__name__}). Check {env} and CHIP_BRAND_ID.")
@@ -387,8 +396,8 @@ async def create_promo(body: PromoIn):
         raise HTTPException(400, "Codes are 3 to 20 letters and numbers, e.g. WELCOME10.")
     if bool(body.percent_off) == bool(body.sen_off):
         raise HTTPException(400, "Give the discount as a percentage or an amount in RM.")
-    if body.percent_off and not 1 <= body.percent_off <= 99:
-        raise HTTPException(400, "A percentage discount must be between 1% and 99%.")
+    if body.percent_off and not 1 <= body.percent_off <= 100:
+        raise HTTPException(400, "A percentage discount must be between 1% and 100%.")
     if body.sen_off and not 10 <= body.sen_off <= 100_000:
         raise HTTPException(400, "An RM discount must be between RM0.10 and RM1,000.")
     if body.max_uses is not None and not 1 <= body.max_uses <= 100_000:

@@ -35,10 +35,10 @@ def chip_purchases(monkeypatch):
     purchases = {}
     counter = iter(range(1, 1000))
 
-    async def create_purchase(station, minutes, amount_sen, product_name, sandbox):
+    async def create_purchase(station, minutes, amount_sen, product_name, sandbox, client_name):
         pid = f"p{next(counter)}"
         purchases[pid] = {"id": pid, "status": "created", "purchase": {"total": amount_sen},
-                          "is_test": sandbox, "name": product_name}
+                          "is_test": sandbox, "name": product_name, "client_name": client_name}
         return {"id": pid, "checkout_url": f"https://gate.chip-in.asia/p/{pid}/"}
 
     async def get_purchase(pid, sandbox):
@@ -53,8 +53,16 @@ def chip_purchases(monkeypatch):
     return purchases
 
 
+OFFERED = ["duitnow_qr", "fpx", "razer_tng", "razer_grabpay", "visa", "mastercard"]
+
+
 @pytest.fixture
-def client(chip_purchases):
+def client(chip_purchases, monkeypatch):
+    async def available_methods(sandbox):  # asked at startup
+        return OFFERED
+
+    monkeypatch.setattr(chip, "available_methods", available_methods)
+    core.offered_methods.clear()
     if os.path.exists(os.environ["DB_PATH"]):
         os.remove(os.environ["DB_PATH"])
     plug._dry_run_state.clear()
@@ -93,6 +101,7 @@ def test_pay_redirects_to_chip_checkout(client, chip_purchases):
     pid = buy(client, chip_purchases, minutes=120)
     assert db.get_purchase(pid)["amount_sen"] == 2000
     assert db.get_purchase(pid)["status"] == "created"
+    assert chip_purchases[pid]["client_name"] == "Switch1"  # the station's name, not the customer's
 
 
 def test_pay_rejects_unknown_options(client):
@@ -351,15 +360,36 @@ def test_payment_method_whitelist(monkeypatch):
 
     monkeypatch.setattr(chip._http, "post", fake_post)
     monkeypatch.setattr(config, "CHIP_PAYMENT_METHODS", ["dnqr", "duitnow_qr", "razer_tng"])
-    asyncio.run(chip.create_purchase("switch1", 60, 1000, "Switch1 playtime - 1 hour", False))
+    asyncio.run(chip.create_purchase("switch1", 60, 1000, "Switch1 playtime - 1 hour", False, "Front TV"))
     assert sent["payment_method_whitelist"] == ["dnqr", "duitnow_qr", "razer_tng"]
     assert sent["key"] == "Bearer test"
+    assert sent["client"] == {"email": "t@example.com", "full_name": "Front TV"}
     assert core.payment_methods() == ["DuitNow QR", "Touch 'n Go"]  # duplicates merged
 
     monkeypatch.setattr(config, "CHIP_PAYMENT_METHODS", [])
-    asyncio.run(chip.create_purchase("switch1", 60, 1000, "Switch1 playtime - 1 hour", True))
+    asyncio.run(chip.create_purchase("switch1", 60, 1000, "Switch1 playtime - 1 hour", True, "Front TV"))
     assert "payment_method_whitelist" not in sent
     assert sent["key"] == "Bearer test-sandbox"
+
+
+def test_method_lookup_sends_an_amount(monkeypatch):
+    """Without one, CHIP lists only cards, hiding e-wallets, FPX and DuitNow QR."""
+    asked = {}
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"available_payment_methods": ["razer_tng"]}
+
+    async def fake_get(url, params, headers):
+        asked.update(params)
+        return Response()
+
+    monkeypatch.setattr(chip._http, "get", fake_get)
+    assert asyncio.run(chip.available_methods(False)) == ["razer_tng"]
+    assert asked["amount"] >= 1000
     assert core.payment_methods() == ["DuitNow QR", "FPX", "e-wallets", "cards"]
 
 
@@ -434,8 +464,9 @@ def test_promo_code_usage_limit(client, chip_purchases):
 
 
 def test_promo_code_rules(client, chip_purchases):
-    add_promo(client, "BIG", sen_off=5000)  # no limit
-    assert check_code(client, "BIG").json()["prices"] == {"30": 100, "60": 100, "120": 100, "180": 100}  # RM1 floor
+    add_promo(client, "BIG", percent_off=95)  # no limit
+    # Something left to pay is at least RM1: 95% off RM30 is RM1.50, the rest round up to RM1.
+    assert check_code(client, "BIG").json()["prices"] == {"30": 100, "60": 100, "120": 100, "180": 150}
     for _ in range(3):
         pay_now(client, chip_purchases, buy(client, chip_purchases, minutes=30, promo="BIG"))
     assert client.get("/admin/api/summary", headers=ADMIN).json()["promos"][0]["uses"] == 3
@@ -444,7 +475,7 @@ def test_promo_code_rules(client, chip_purchases):
     assert add_promo(client, "NO-DASH", percent_off=10).status_code == 400
     assert add_promo(client, "BOTH", percent_off=10, sen_off=100).status_code == 400
     assert add_promo(client, "NEITHER").status_code == 400
-    assert add_promo(client, "FREE", percent_off=100).status_code == 400
+    assert add_promo(client, "TOOMUCH", percent_off=101).status_code == 400
     assert add_promo(client, "ZERO", percent_off=10, max_uses=0).status_code == 400
     assert add_promo(client, "big", percent_off=10).status_code == 400  # already exists
     assert client.post("/admin/promos", json={"code": "X1Y2", "percent_off": 5}).status_code == 403
@@ -458,7 +489,7 @@ def test_promo_code_rules(client, chip_purchases):
     details = [a["detail"] for a in client.get("/admin/api/summary", headers=ADMIN).json()["activity"]
                if a["kind"] == "settings"]
     assert details[:3] == ["promo code BIG added (RM1 off, no limit)", "promo code BIG removed",
-                           "promo code BIG added (RM50 off, no limit)"]
+                           "promo code BIG added (95% off, no limit)"]
 
 
 # --- Sandbox / production ------------------------------------------------------------
@@ -480,10 +511,14 @@ def chip_accepts_keys(monkeypatch):
 
 
 def test_sandbox_mode_switch(client, chip_purchases, chip_accepts_keys):
-    assert client.get("/admin/api/summary", headers=ADMIN).json()["payments"] == \
-        {"sandbox": False, "production_key": True, "sandbox_key": True}
+    payments = client.get("/admin/api/summary", headers=ADMIN).json()["payments"]
+    assert payments == {"sandbox": False, "production_key": True, "sandbox_key": True,
+                        "methods": ["DuitNow QR", "FPX", "Touch 'n Go", "GrabPay", "Visa", "Mastercard"],
+                        "ewallets": "on"}
     assert set_mode(client, True).json() == {"sandbox": True}
     assert chip_accepts_keys == [True]  # the key was tried before switching
+    payments = client.get("/admin/api/summary", headers=ADMIN).json()["payments"]
+    assert payments["methods"] == ["DuitNow QR"] and payments["ewallets"] == "off"  # what sandbox offers
     assert "Test mode" in client.get("/s/switch1").text and "Test mode" in client.get("/d/switch1").text
 
     test_pid = buy(client, chip_purchases)
@@ -532,3 +567,39 @@ def test_sandbox_promo_uses_counted_apart(client, chip_purchases, chip_accepts_k
     assert check_code(client, "ONCE").status_code == 200  # ...but still fresh for real customers
     promo = client.get("/admin/api/summary", headers=ADMIN).json()["promos"][0]
     assert (promo["uses"], promo["test_uses"]) == (0, 1)
+
+
+def test_full_discount_starts_play_without_checkout(client, chip_purchases):
+    add_promo(client, "FREE100", percent_off=100, max_uses=1)
+    assert check_code(client, "FREE100").json()["prices"] == {"30": 0, "60": 0, "120": 0, "180": 0}
+    r = client.post("/s/switch1/pay", data={"minutes": 60, "promo": "free100"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/s/switch1?free=1"
+    assert chip_purchases == {}  # CHIP never saw it
+    assert remaining(client) > 3500
+    run_sync(client)
+    assert plug._dry_run_state[IP] is True
+    assert "nothing to pay" in client.get("/s/switch1?free=1").text
+    s = client.get("/admin/api/summary", headers=ADMIN).json()
+    assert s["stats"]["today_sen"] == 0 and s["stats"]["today_count"] == 0  # free play isn't a sale
+    assert s["promos"][0]["uses"] == 1
+    free = next(a for a in s["activity"] if a["kind"] == "payment")
+    assert (free["sen"], free["promo"], free["discount_sen"]) == (0, "FREE100", 1000)
+    r = check_code(client, "FREE100", station="switch2")
+    assert r.status_code == 400 and "fully used" in r.json()["detail"]
+    # An RM discount bigger than the price is free too.
+    add_promo(client, "RM50", sen_off=5000)
+    assert check_code(client, "RM50").json()["prices"]["180"] == 0
+
+
+def test_ewallet_status_in_admin(client, chip_purchases, monkeypatch):
+    def ewallets():
+        return client.get("/admin/api/summary", headers=ADMIN).json()["payments"]
+
+    core.offered_methods[False] = OFFERED
+    monkeypatch.setattr(config, "CHIP_PAYMENT_METHODS", ["duitnow_qr", "fpx"])
+    assert ewallets()["methods"] == ["DuitNow QR", "FPX"] and ewallets()["ewallets"] == "excluded"
+    monkeypatch.setattr(config, "CHIP_PAYMENT_METHODS", [])
+    core.offered_methods[False] = ["duitnow_qr", "visa"]
+    assert ewallets()["ewallets"] == "off"
+    core.offered_methods.clear()
+    assert ewallets()["methods"] is None and ewallets()["ewallets"] is None

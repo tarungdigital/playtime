@@ -29,10 +29,11 @@ def _auth(sandbox: bool) -> dict:
 
 
 async def create_purchase(station: str, minutes: int, amount_sen: int, product_name: str,
-                          sandbox: bool) -> dict:
+                          sandbox: bool, client_name: str) -> dict:
     body = {
         "brand_id": config.CHIP_BRAND_ID,
-        "client": {"email": config.CHIP_CLIENT_EMAIL},
+        # The station's name, so the checkout doesn't ask the customer for theirs.
+        "client": {"email": config.CHIP_CLIENT_EMAIL, "full_name": client_name},
         "purchase": {
             "currency": "MYR",
             "products": [{"name": product_name, "price": amount_sen}],
@@ -51,8 +52,10 @@ async def create_purchase(station: str, minutes: int, amount_sen: int, product_n
 
 async def available_methods(sandbox: bool) -> list[str]:
     """Payment method codes this CHIP account can offer in MYR. Also tests the key."""
-    r = await _http.get("/payment_methods/", params={"brand_id": config.CHIP_BRAND_ID, "currency": "MYR"},
-                        headers=_auth(sandbox))
+    # Without an amount CHIP lists only cards: FPX, DuitNow QR and e-wallets have minimums.
+    # RM10 is above all of them.
+    params = {"brand_id": config.CHIP_BRAND_ID, "currency": "MYR", "amount": 1000}
+    r = await _http.get("/payment_methods/", params=params, headers=_auth(sandbox))
     r.raise_for_status()
     return r.json().get("available_payment_methods", [])
 

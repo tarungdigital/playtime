@@ -184,6 +184,10 @@
   <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor" opacity=".2"/><path d="M6 10.3l2.6 2.6L14.2 7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
   <span>Payment received. The console is powering on. Have fun!</span>
 </div>
+<div class="banner ok" id="banner-free" hidden>
+  <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor" opacity=".2"/><path d="M6 10.3l2.6 2.6L14.2 7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <span>Promo code applied, nothing to pay. The console is powering on. Have fun!</span>
+</div>
 <div class="banner wait" id="banner-confirming" hidden>
   <span class="spinner" aria-hidden="true"></span>
   <span id="confirming-text">Confirming your payment…</span>
@@ -312,7 +316,8 @@
         history.replaceState(null, "", location.pathname);
         buzz();
       }
-    } else if (notice === "failed" || notice === "error" || notice === "badpromo") {
+    } else if (["failed", "error", "badpromo", "free"].includes(notice)) {
+      if (notice === "free") buzz();
       $("banner-" + notice).hidden = false;
       history.replaceState(null, "", location.pathname);
       notice = "shown";
@@ -351,6 +356,7 @@
   let promo = null;  // {code, label, prices: {minutes: sen}} once a code is applied
   const fullPrice = (input) => Number(input.dataset.price);
   const priceOf = (input) => promo?.prices[input.value] ?? fullPrice(input);
+  const priceText = (sen) => (sen === 0 ? "Free" : rm(sen));  // a code can cover the whole price
   const strike = (text) => Object.assign(document.createElement("s"), { textContent: text });
 
   function renderPrices() {
@@ -358,7 +364,7 @@
       const el = input.parentElement.querySelector(".tile-price");
       el.replaceChildren();
       if (priceOf(input) !== fullPrice(input)) el.append(strike(rm(fullPrice(input))), " ");
-      el.append(rm(priceOf(input)));
+      el.append(priceText(priceOf(input)));
     }
     updateBar();
   }
@@ -421,13 +427,13 @@
     const choice = document.querySelector("input[name=minutes]:checked");
     const discounted = priceOf(choice) !== fullPrice(choice);
     $("sum-hours").replaceChildren(choice.dataset.label, ...(discounted ? [" · ", strike(rm(fullPrice(choice)))] : []));
-    $("sum-price").textContent = rm(priceOf(choice));
+    $("sum-price").textContent = priceText(priceOf(choice));
     if (submitting) return;
     const btn = $("pay-btn");
     // Don't let someone pay twice while their first payment is still confirming.
     const confirming = notice === "paid";
     btn.disabled = confirming;
-    btn.textContent = confirming ? "Confirming…" : wasActive ? "Add time" : "Pay now";
+    btn.textContent = confirming ? "Confirming…" : wasActive ? "Add time" : priceOf(choice) === 0 ? "Start playing" : "Pay now";
   }
 
   async function poll() {
@@ -451,7 +457,8 @@
     buzz();
     const btn = $("pay-btn");
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner" aria-hidden="true"></span>Opening payment…';
+    const free = priceOf(document.querySelector("input[name=minutes]:checked")) === 0;
+    btn.innerHTML = '<span class="spinner" aria-hidden="true"></span>' + (free ? "Starting…" : "Opening payment…");
   });
   // Re-enable the button if the customer comes back with the browser's back button.
   window.addEventListener("pageshow", (e) => {

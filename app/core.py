@@ -4,6 +4,7 @@ import asyncio
 import logging
 import re
 import time
+import uuid
 from collections import defaultdict
 from pathlib import Path
 
@@ -62,12 +63,31 @@ METHOD_NAMES = {
 }
 
 
+EWALLETS = {"razer_tng", "razer_grabpay", "razer_shopeepay", "shopee_pay"}
+# Method codes CHIP offers this account, per mode (sandbox True/False). Filled at startup and
+# when the mode is switched; missing = not asked yet.
+offered_methods: dict[bool, list[str]] = {}
+
+
+def method_names(codes) -> list[str]:
+    names = [METHOD_NAMES.get(code, code) for code in codes]
+    return list(dict.fromkeys(names))  # dnqr + duitnow_qr -> one "DuitNow QR"
+
+
 def payment_methods() -> list[str]:
     """Names of the payment methods customers can use, for the pages to show."""
     if not config.CHIP_PAYMENT_METHODS:
         return ["DuitNow QR", "FPX", "e-wallets", "cards"]
-    names = [METHOD_NAMES.get(code, code) for code in config.CHIP_PAYMENT_METHODS]
-    return list(dict.fromkeys(names))  # dnqr + duitnow_qr -> one "DuitNow QR"
+    return method_names(config.CHIP_PAYMENT_METHODS)
+
+
+def checkout_methods(sandbox: bool) -> list[str] | None:
+    """Method codes customers will see at checkout: what CHIP offers, narrowed by
+    CHIP_PAYMENT_METHOD. None if CHIP hasn't been asked yet."""
+    if sandbox not in offered_methods:
+        return None
+    allowed = config.CHIP_PAYMENT_METHODS
+    return [m for m in offered_methods[sandbox] if not allowed or m in allowed]
 
 
 def sandbox() -> bool:
@@ -84,18 +104,18 @@ def set_sandbox(on: bool):
 async def check_payment_methods():
     """Startup: warn about a missing CHIP key, and about CHIP_PAYMENT_METHOD codes this
     CHIP account doesn't offer, since CHIP would then refuse to create purchases."""
-    if not chip.secret_key(sandbox()):
+    test = sandbox()
+    if not chip.secret_key(test):
         log.warning("no CHIP %s key in .env, so customers can't pay. Add it, or switch mode in the admin panel.",
-                    "CHIP_SANDBOX_SECRET_KEY" if sandbox() else "CHIP_SECRET_KEY")
-        return
-    wanted = config.CHIP_PAYMENT_METHODS + ([config.CHIP_PREFERRED_METHOD] if config.CHIP_PREFERRED_METHOD else [])
-    if not wanted:
+                    "CHIP_SANDBOX_SECRET_KEY" if test else "CHIP_SECRET_KEY")
         return
     try:
-        available = await chip.available_methods(sandbox())
+        available = offered_methods[test] = await chip.available_methods(test)
     except Exception as e:
         log.warning("couldn't check payment methods with CHIP: %r", e)
         return
+    log.info("CHIP %s offers: %s", "sandbox" if test else "production", ", ".join(available))
+    wanted = config.CHIP_PAYMENT_METHODS + ([config.CHIP_PREFERRED_METHOD] if config.CHIP_PREFERRED_METHOD else [])
     unknown = [m for m in wanted if m not in available]
     if unknown:
         log.warning("payment methods not offered by your CHIP account: %s. Available: %s",
@@ -156,7 +176,7 @@ def set_options(new: dict[int, int]):
 
 # --- Promo codes ----------------------------------------------------------------
 
-MIN_CHARGE_SEN = 100  # RM1: a discount never takes a checkout below this
+MIN_CHARGE_SEN = 100  # RM1: a discount that leaves something to pay never goes below this
 # A checkout with a code holds one of its uses this long, in case that customer is still
 # paying. Only against other stations, so the same customer can go back and try again.
 PROMO_HOLD_SECONDS = 15 * 60
@@ -177,8 +197,9 @@ def promo_label(promo) -> str:
 
 
 def promo_price(promo, sen: int) -> int:
+    """0 (free) if the code covers the whole price."""
     off = round(sen * promo["percent_off"] / 100) if promo["percent_off"] else promo["sen_off"]
-    return max(sen - off, min(sen, MIN_CHARGE_SEN))
+    return 0 if off >= sen else max(sen - off, min(sen, MIN_CHARGE_SEN))
 
 
 def usable_promo(raw: str, station: str):
@@ -257,6 +278,16 @@ def state(station: str) -> dict:
         "total_seconds": int(ends_at - started_at) if remaining else 0,
         "plug_online": plug_online.get(station),
     }
+
+
+def credit_free(station: str, minutes: int, price: int, promo, sandbox: bool):
+    """A promo code that covers the whole price: nothing to pay, so no CHIP checkout. Recorded
+    as a paid RM0 purchase so the code's use is counted, and the time starts now."""
+    purchase_id = f"free-{uuid.uuid4().hex}"
+    db.add_purchase(purchase_id, station, minutes, 0, sandbox, promo["code"], price)
+    db.mark_paid_and_credit(purchase_id)
+    log.info("%s: +%d min free with promo %s", station, minutes, promo["code"])
+    spawn(sync_plug(station))
 
 
 async def credit_if_paid(purchase_id: str) -> bool:

@@ -81,6 +81,8 @@
   .card-actions .hint { margin: 0; }
   .badge.test, .kind.test { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
   .code { font-weight: 700; letter-spacing: .5px; }
+  .methods-line { margin: 12px 0 0; font-size: 14px; line-height: 1.45; }
+  .methods-line + .hint { margin: 6px 0 0; }
   .code-input { text-transform: uppercase; letter-spacing: .5px; }
   .code-input::placeholder { text-transform: none; letter-spacing: 0; }
   .head-actions { display: flex; align-items: center; gap: 12px; }
@@ -507,6 +509,16 @@
       h("dl", { class: "readout-list" },
         h("dt", {}, "Production key"), h("dd", {}, key(p.production_key)),
         h("dt", {}, "Sandbox key"), h("dd", {}, key(p.sandbox_key))),
+      h("p", { class: "methods-line" }, h("span", { class: "muted" }, "At checkout: "),
+        p.methods === null ? h("span", { class: "muted" }, "not checked with CHIP yet")
+          : p.methods.length ? p.methods.join(", ") : h("span", { class: "delta-down" }, "no payment methods")),
+      p.ewallets === "excluded"
+        ? h("p", { class: "hint warn" }, "E-wallets are left out by CHIP_PAYMENT_METHOD in .env. Add razer_tng, " +
+            "razer_grabpay and razer_shopeepay to it (or remove the line to offer everything) and restart.")
+        : p.ewallets === "off"
+        ? h("p", { class: "hint warn" }, `CHIP doesn't offer e-wallets on this account${p.sandbox ? " in sandbox" : ""}. ` +
+            "Activate Touch 'n Go, GrabPay and ShopeePay in the CHIP dashboard, or ask CHIP support.")
+        : null,
       h("div", { class: "card-actions" },
         h("button", { class: "btn-s" + (to ? "" : " primary"), type: "button", disabled: !hasKey,
           onclick: (e) => switchMode(to, e.currentTarget) }, `Switch to ${to ? "sandbox" : "production"}`),
@@ -568,7 +580,8 @@
     $("promos-card").replaceChildren(h("form", { class: "panel-form", onsubmit: submitHandler(f, "Create code", save) },
       settingsHead("New promo code", null),
       h("p", { class: "hint" }, "Customers type it on the pay page before they're sent to CHIP. " +
-        "A discount never takes a price below RM1. Sandbox test payments don't use up a code."),
+        "A code covering the whole price (like 100% off) starts play with no payment; otherwise " +
+        "they pay at least RM1. Sandbox test payments don't use up a code."),
       h("label", { class: "field-label" }, "Code",
         f.code = h("input", { class: "field code-input", maxlength: 20, placeholder: "e.g. WELCOME10",
           autocomplete: "off", spellcheck: "false", oninput: () => f.reset() })),
@@ -914,6 +927,7 @@
     }
     $("activity").replaceChildren(...data.activity.map((a) => {
       const kind = a.kind === "payment" && a.sandbox ? h("span", { class: "kind test" }, "Test payment")
+        : a.kind === "payment" && !a.sen ? h("span", { class: "kind" }, "Free play")
         : a.kind === "payment" ? h("span", { class: "kind payment" }, "Payment")
         : a.kind === "add" ? h("span", { class: "kind" }, "Free time")
         : a.kind === "ip" || a.kind === "settings" ? h("span", { class: "kind" }, "Settings")

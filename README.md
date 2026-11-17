@@ -67,11 +67,14 @@ Open `/admin` and log in with the `ADMIN_TOKEN` password. It shows:
 - **Payments:** **Switch to sandbox / production** (tap twice to confirm). Sandbox checkouts
   use CHIP's test mode: no real money, so anyone can start a station with a test payment,
   and they're left out of revenue. The key is tested with CHIP before switching, and
-  checkouts already started finish in the mode they began in.
+  checkouts already started finish in the mode they began in. The card also lists the methods
+  customers will see at checkout, and says why if e-wallets are missing (left out by
+  `CHIP_PAYMENT_METHOD`, or not activated on your CHIP account).
 - **Promo codes:** **+ New code** with a % or RM discount and how many times it can be used
   (blank = no limit). Customers enter it on the pay page under **Have a promo code?** and see
-  the discounted prices before they're sent to CHIP. A discount never takes a price below
-  RM1. A use counts once the payment goes through. While a customer is paying, their checkout
+  the discounted prices before they're sent to CHIP. A code that covers the whole price
+  (e.g. 100% off) starts the station straight away with no payment. Otherwise the price never
+  goes below RM1. Free play isn't counted as sales. A use counts once the payment goes through. While a customer is paying, their checkout
   holds a use for 15 minutes, so the last use can't go to two people. Sandbox uses are counted
   separately, so testing doesn't use up a real code.
 - **Settings:** prices, and the Tapo account the plugs are switched with.
